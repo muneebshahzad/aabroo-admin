@@ -1,0 +1,100 @@
+{% if not skip_base_password_prompt and not embedded_mode %}
+<style>
+  body {
+      display: none;
+  }
+</style>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+      const correctPassword = '.';
+      const accessDuration = 10 * 60 * 1000;
+
+      function checkPassword() {
+          const lastAccess = localStorage.getItem('lastAccess');
+          const currentTime = new Date().getTime();
+
+          if (lastAccess && (currentTime - lastAccess < accessDuration)) {
+              document.body.style.display = 'block';
+              return;
+          }
+
+          while (true) {
+              const userPassword = prompt('Enter the password to access this page:');
+              if (userPassword === correctPassword) {
+                  localStorage.setItem('lastAccess', currentTime);
+                  document.body.style.display = 'block';
+                  break;
+              }
+              alert('Wrong password. Please try again.');
+          }
+      }
+
+      checkPassword();
+  });
+</script>
+{% endif %}
+
+{% if not embedded_mode %}
+<ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+
+            <!-- Sidebar - Brand -->
+            <a class="sidebar-brand d-flex align-items-center justify-content-center" href="/">
+                <div class="sidebar-brand-icon rotate-n-15">
+                    <i class="fas fa-laugh-wink"></i>
+                </div>
+                <div class="sidebar-brand-text mx-3">Aabroo Ops</div>
+            </a>
+
+            <!-- Divider -->
+            <hr class="sidebar-divider my-0">
+
+            <!-- Nav Item - Dashboard -->
+            <li class="nav-item">
+                <a class="nav-link" href="/">
+                    <i class="fas fa-fw fa-tachometer-alt"></i>
+                    <span>Track</span></a>
+            </li>
+
+            <!-- Divider -->
+            <hr class="sidebar-divider">
+
+            <!-- Heading -->
+
+            <!-- Nav Item - Pages Collapse Menu -->
+
+
+              <!-- Nav Item - Pages Collapse Menu -->
+        <ul class="navbar-nav">
+    
+    <li class="nav-item">
+        <a class="nav-link" href="/pending">
+            <i class="fas fa-fw fa-table"></i>
+            <span>Pending Orders</span>
+        </a>
+    </li>
+            <li class="nav-item">
+        <a class="nav-link" href="/undelivered">
+            <i class="fas fa-fw fa-table"></i>
+            <span>Undelivered Orders</span>
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link" href="#" id="refreshButton">
+            <i class="fas fa-sync-alt"></i>
+            <span>Refresh Data</span>
+        </a>
+    </li>
+    
+</ul>
+
+            <!-- Divider -->
+            <hr class="sidebar-divider d-none d-md-block">
+
+            <!-- Sidebar Toggler (Sidebar) -->
+            <div class="text-center d-none d-md-inline">
+                <button class="rounded-circle border-0" id="sidebarToggle"></button>
+            </div>
+
+        </ul>
+{% endif %}
+

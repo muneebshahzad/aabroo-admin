@@ -1,0 +1,465 @@
+{% extends 'base.html' %}
+{% block title %}Accounts · Aabroo Ops{% endblock %}
+
+{% block content %}
+{% set summary = data.summary or {} %}
+{% set balances = data.balances or [] %}
+{% set categories = data.categories or {'income': [], 'expense': []} %}
+{% set category_groups = data.category_breakdown_by_kind or {'income': [], 'expense': []} %}
+{% set income_categories = category_groups.income or [] %}
+{% set expense_categories = category_groups.expense or [] %}
+{% set agha_ledger = data.agha_ledger or {'balance': 0, 'investment_total': 0, 'withdrawal_total': 0, 'rows': []} %}
+
+<style>
+  #main { min-height: 0; max-height: 100vh; overflow-y: auto !important; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+  .accounts-page { padding: 24px 24px 80px; display: flex; flex-direction: column; gap: 18px; min-height: max-content; }
+  .accounts-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+  .accounts-title h1 { font-size: 24px; line-height: 1.1; color: #222431; margin-bottom: 5px; }
+  .accounts-title p { color: #858796; font-size: 13px; }
+  .accounts-actions { display: flex; gap: 8px; align-items: center; }
+  .accounts-button { border: 1px solid #dbe1f1; background: #fff; color: #1f2a44; border-radius: 9px; min-height: 38px; padding: 0 14px; font-size: 12px; font-weight: 800; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 7px; }
+  .accounts-button.primary { background: #4e73df; color: #fff; border-color: #4e73df; }
+  .accounts-button.success { background: #1cc88a; color: #fff; border-color: #1cc88a; }
+  .accounts-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+  .account-card { background: #fff; border: 1px solid #e1e7f5; border-radius: 12px; padding: 16px; box-shadow: 0 8px 22px rgba(31,42,68,0.06); min-height: 112px; display: flex; flex-direction: column; justify-content: space-between; }
+  .account-card .label { text-transform: uppercase; letter-spacing: 0.08em; color: #858796; font-size: 10px; font-weight: 900; }
+  .account-card .value { font-size: 23px; font-weight: 900; color: #222431; line-height: 1.05; margin-top: 8px; }
+  .account-card.income .value, .positive { color: #1cc88a; }
+  .account-card.expense .value, .negative { color: #e74a3b; }
+  .account-card .hint { font-size: 11px; color: #9aa1b4; margin-top: 8px; }
+  .accounts-layout { display: grid; grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.4fr); gap: 14px; align-items: start; }
+  .accounts-panel { background: #fff; border: 1px solid #e1e7f5; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 22px rgba(31,42,68,0.05); }
+  .panel-head { padding: 16px 18px; border-bottom: 1px solid #e8edf8; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .panel-head h2 { font-size: 16px; color: #222431; margin: 0; }
+  .panel-head p { font-size: 12px; color: #858796; margin-top: 3px; }
+  .panel-body { padding: 16px 18px; }
+  .notice, .error-box { padding: 11px 13px; border-radius: 10px; font-size: 12px; font-weight: 700; }
+  .notice { background: #e8fff6; color: #087a50; border: 1px solid #b8f0d8; }
+  .error-box { background: #fff2f0; color: #a62b22; border: 1px solid #ffc9c2; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-field { display: flex; flex-direction: column; gap: 6px; }
+  .form-field.full { grid-column: 1 / -1; }
+  .form-field label { color: #858796; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; }
+  .form-field input, .form-field select, .form-field textarea { width: 100%; border: 1px solid #dbe1f1; border-radius: 9px; padding: 11px 12px; color: #222431; background: #fbfcff; font: 600 13px 'DM Sans', sans-serif; outline: none; }
+  .form-field textarea { min-height: 80px; resize: vertical; }
+  .form-field input:focus, .form-field select:focus, .form-field textarea:focus { border-color: #4e73df; box-shadow: 0 0 0 3px rgba(78,115,223,0.13); background: #fff; }
+  .type-toggle { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .type-toggle label { min-height: 42px; border: 1px solid #dbe1f1; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #858796; cursor: pointer; }
+  .type-toggle input { display: none; }
+  .type-toggle input:checked + span { color: #fff; }
+  .type-toggle label:has(input:checked) { background: #4e73df; border-color: #4e73df; }
+  .table-wrap { overflow: auto; }
+  .accounts-table { width: 100%; border-collapse: collapse; min-width: 850px; }
+  .accounts-table th { background: #f8f9fc; color: #858796; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; text-align: left; padding: 12px 14px; border-bottom: 1px solid #e8edf8; }
+  .accounts-table td { padding: 13px 14px; border-bottom: 1px solid #edf1f9; font-size: 12px; color: #333746; vertical-align: top; }
+  .accounts-table td.money { font-family: 'DM Mono', monospace; font-weight: 800; text-align: right; white-space: nowrap; }
+  .chip { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.04em; }
+  .chip.income { background: #e8fff6; color: #087a50; }
+  .chip.expense { background: #fff2f0; color: #b92f25; }
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tab-button { border: 1px solid #dbe1f1; background: #fff; border-radius: 999px; padding: 9px 14px; color: #1f2a44; font-size: 12px; font-weight: 900; cursor: pointer; }
+  .tab-button.active { background: #4e73df; color: #fff; border-color: #4e73df; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .chart-rows { display: flex; flex-direction: column; gap: 12px; }
+  .chart-row { display: grid; grid-template-columns: 86px 1fr 90px; gap: 10px; align-items: center; font-size: 12px; }
+  .bar-track { height: 10px; background: #edf1f9; border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; min-width: 2px; }
+  .bar-fill.income { background: #1cc88a; }
+  .bar-fill.expense { background: #e74a3b; }
+  .bar-fill.profit { background: #4e73df; }
+  .dashboard-stack { display: grid; gap: 18px; }
+  .insight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .insight-card { border: 1px solid #e8edf8; border-radius: 12px; padding: 14px; background: #fbfcff; }
+  .insight-card h3 { color: #222431; font-size: 13px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .insight-card h3 span { color: #858796; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .insight-list { display: flex; flex-direction: column; gap: 9px; }
+  .insight-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; color: #333746; font-size: 12px; }
+  .insight-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
+  .insight-value { font-family: 'DM Mono', monospace; font-weight: 900; white-space: nowrap; }
+  details.insight-more { margin-top: 10px; }
+  details.insight-more summary { cursor: pointer; color: #4e73df; font-size: 12px; font-weight: 900; list-style: none; }
+  details.insight-more summary::-webkit-details-marker { display: none; }
+  .agha-ledger-card { border: 1px solid #dbe1f1; border-radius: 12px; overflow: hidden; background: #fff; }
+  .agha-ledger-head { padding: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; border-bottom: 1px solid #edf1f9; }
+  .agha-ledger-metric { background: #f8f9fc; border-radius: 10px; padding: 11px; }
+  .agha-ledger-metric .label { color: #858796; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; }
+  .agha-ledger-metric .value { margin-top: 6px; color: #222431; font-size: 17px; font-weight: 900; font-family: 'DM Mono', monospace; }
+  .empty-state { padding: 40px 20px; text-align: center; color: #858796; font-size: 13px; }
+
+  @media (max-width: 1100px) {
+    .accounts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .accounts-layout { grid-template-columns: 1fr; }
+    .insight-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 720px) {
+    .accounts-page { padding: 16px 16px 72px; }
+    .accounts-grid { grid-template-columns: 1fr; }
+    .form-grid { grid-template-columns: 1fr; }
+    .accounts-title h1 { font-size: 22px; }
+    .agha-ledger-head { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="accounts-page">
+  <div class="accounts-top">
+    <div class="accounts-title">
+      <h1>Accounts</h1>
+      <p>Daily cashbook, ledgers, profit/loss, and category reporting for Aabroo.</p>
+    </div>
+    <div class="accounts-actions">
+      <a class="accounts-button" href="/admin_portal">Admin Portal</a>
+      <button class="accounts-button primary" type="button" onclick="document.getElementById('transactionForm').scrollIntoView({behavior:'smooth', block:'start'});">Add Transaction</button>
+    </div>
+  </div>
+
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% if error_message %}<div class="error-box">{{ error_message }}</div>{% endif %}
+
+  <div class="accounts-grid">
+    {% for account in balances %}
+      <div class="account-card">
+        <div>
+          <div class="label">{{ account.name }} Balance</div>
+          <div class="value {% if account.balance < 0 %}negative{% endif %}">Rs {{ account.balance|format_number }}</div>
+        </div>
+        <div class="hint">Live ledger balance</div>
+      </div>
+    {% endfor %}
+    <div class="account-card income">
+      <div>
+        <div class="label">Monthly Income</div>
+        <div class="value">Rs {{ summary.month_income|default(0)|format_number }}</div>
+      </div>
+      <div class="hint">{{ now.strftime('%B %Y') }}</div>
+    </div>
+    <div class="account-card expense">
+      <div>
+        <div class="label">Monthly Expense</div>
+        <div class="value">Rs {{ summary.month_expense|default(0)|format_number }}</div>
+      </div>
+      <div class="hint">{{ now.strftime('%B %Y') }}</div>
+    </div>
+    <div class="account-card {% if summary.month_profit|default(0) >= 0 %}income{% else %}expense{% endif %}">
+      <div>
+        <div class="label">Monthly Profit / Loss</div>
+        <div class="value">Rs {{ summary.month_profit|default(0)|format_number }}</div>
+      </div>
+      <div class="hint">Income minus expenses</div>
+    </div>
+  </div>
+
+  <div class="accounts-layout">
+    <section class="accounts-panel" id="transactionForm">
+      <div class="panel-head">
+        <div>
+          <h2>Add transaction</h2>
+          <p>Only real transactions go here. Reports are calculated live from this ledger.</p>
+        </div>
+      </div>
+      <form class="panel-body form-grid" method="post" action="/accounts">
+        <div class="type-toggle">
+          <label><input type="radio" name="kind" value="income" checked><span>Income</span></label>
+          <label><input type="radio" name="kind" value="expense"><span>Expense</span></label>
+        </div>
+        <div class="form-field">
+          <label>Date</label>
+          <input type="date" name="tx_date" value="{{ now.strftime('%Y-%m-%d') }}" required>
+        </div>
+        <div class="form-field">
+          <label>Account</label>
+          <select name="account_id" required>
+            {% for account in data.accounts %}
+              <option value="{{ account.id }}">{{ account.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Category</label>
+          <select name="category_id" id="categorySelect" required></select>
+        </div>
+        <div class="form-field">
+          <label>Sub category</label>
+          <select name="subcategory_id" id="subcategorySelect"></select>
+        </div>
+        <div class="form-field full">
+          <label>Amount</label>
+          <input type="number" name="amount" min="0.01" step="0.01" placeholder="0" required>
+        </div>
+        <div class="form-field full">
+          <label>Note</label>
+          <textarea name="note" placeholder="Optional detail, receipt, vendor, order note..."></textarea>
+        </div>
+        <div class="form-field full">
+          <button class="accounts-button success" type="submit">Save transaction</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="accounts-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Dashboard summary</h2>
+          <p>Current month and rolling profit/loss.</p>
+        </div>
+      </div>
+      <div class="panel-body dashboard-stack">
+        <div class="chart-rows">
+          {% set max_month_value = namespace(value=1) %}
+          {% for row in data.monthly %}
+            {% set row_max = [row.income|abs, row.expense|abs, row.profit|abs]|max %}
+            {% if row_max > max_month_value.value %}{% set max_month_value.value = row_max %}{% endif %}
+          {% endfor %}
+          {% for row in data.monthly %}
+            <div class="chart-row">
+              <strong>{{ row.label }}</strong>
+              <div class="bar-track"><div class="bar-fill profit" style="width: {{ ((row.profit|abs / max_month_value.value) * 100)|round(1) }}%;"></div></div>
+              <span class="{% if row.profit < 0 %}negative{% else %}positive{% endif %}">Rs {{ row.profit|format_number }}</span>
+            </div>
+          {% else %}
+            <div class="empty-state">No monthly data yet. Add your first transaction to build the report.</div>
+          {% endfor %}
+        </div>
+
+        <div class="insight-grid">
+          <div class="insight-card">
+            <h3>Top Income <span>{{ now.strftime('%b %Y') }}</span></h3>
+            <div class="insight-list">
+              {% for row in income_categories[:5] %}
+                <div class="insight-row"><div class="insight-name">{{ row.category_name }}</div><div class="insight-value positive">Rs {{ row.total|format_number }}</div></div>
+              {% else %}
+                <div class="empty-state">No income categories this month.</div>
+              {% endfor %}
+            </div>
+            {% if income_categories|length > 5 %}
+              <details class="insight-more">
+                <summary>See all income categories</summary>
+                <div class="insight-list" style="margin-top:10px;">
+                  {% for row in income_categories[5:] %}
+                    <div class="insight-row"><div class="insight-name">{{ row.category_name }}</div><div class="insight-value positive">Rs {{ row.total|format_number }}</div></div>
+                  {% endfor %}
+                </div>
+              </details>
+            {% endif %}
+          </div>
+          <div class="insight-card">
+            <h3>Top Expenses <span>{{ now.strftime('%b %Y') }}</span></h3>
+            <div class="insight-list">
+              {% for row in expense_categories[:5] %}
+                <div class="insight-row"><div class="insight-name">{{ row.category_name }}</div><div class="insight-value negative">Rs {{ row.total|format_number }}</div></div>
+              {% else %}
+                <div class="empty-state">No expense categories this month.</div>
+              {% endfor %}
+            </div>
+            {% if expense_categories|length > 5 %}
+              <details class="insight-more">
+                <summary>See all expense categories</summary>
+                <div class="insight-list" style="margin-top:10px;">
+                  {% for row in expense_categories[5:] %}
+                    <div class="insight-row"><div class="insight-name">{{ row.category_name }}</div><div class="insight-value negative">Rs {{ row.total|format_number }}</div></div>
+                  {% endfor %}
+                </div>
+              </details>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="agha-ledger-card">
+          <div class="agha-ledger-head">
+            <div class="agha-ledger-metric">
+              <div class="label">Al Karamat investment</div>
+              <div class="value positive">Rs {{ agha_ledger.investment_total|format_number }}</div>
+            </div>
+            <div class="agha-ledger-metric">
+              <div class="label">Al Karamat withdrawal</div>
+              <div class="value negative">Rs {{ agha_ledger.withdrawal_total|format_number }}</div>
+            </div>
+            <div class="agha-ledger-metric">
+              <div class="label">Net Al Karamat ledger</div>
+              <div class="value {% if agha_ledger.balance < 0 %}negative{% else %}positive{% endif %}">Rs {{ agha_ledger.balance|format_number }}</div>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="accounts-table">
+              <thead><tr><th>Date</th><th>Movement</th><th>Account</th><th>Note</th><th>Investment</th><th>Withdrawal</th><th>Balance</th></tr></thead>
+              <tbody>
+                {% for row in agha_ledger.rows[:8] %}
+                  <tr>
+                    <td>{{ row.tx_date }}</td>
+                    <td>{{ row.category_name }}{% if row.subcategory_name %} · {{ row.subcategory_name }}{% endif %}</td>
+                    <td>{{ row.account_name }}</td>
+                    <td>{{ row.note or '—' }}</td>
+                    <td class="money positive">{% if row.income %}Rs {{ row.income|format_number }}{% else %}—{% endif %}</td>
+                    <td class="money negative">{% if row.expense %}Rs {{ row.expense|format_number }}{% else %}—{% endif %}</td>
+                    <td class="money {% if row.running_balance < 0 %}negative{% else %}positive{% endif %}">Rs {{ row.running_balance|format_number }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="7"><div class="empty-state">No Al Karamat investment or withdrawal entries yet.</div></td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section class="accounts-panel">
+    <div class="panel-head">
+      <div>
+        <h2>Reports</h2>
+        <p>Transactions, account ledgers, monthly profit/loss, and category breakdown.</p>
+      </div>
+      <div class="tabs">
+        <button type="button" class="tab-button active" data-tab="transactions">Transactions</button>
+        <button type="button" class="tab-button" data-tab="ledger">Account ledger</button>
+        <button type="button" class="tab-button" data-tab="monthly">Monthly P/L</button>
+        <button type="button" class="tab-button" data-tab="categories">Categories</button>
+      </div>
+    </div>
+
+    <div class="tab-panel active" id="tab-transactions">
+      <div class="table-wrap">
+        <table class="accounts-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Account</th>
+              <th>Category</th>
+              <th>Note</th>
+              <th>Income</th>
+              <th>Expense</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for tx in data.transactions %}
+              <tr>
+                <td>{{ tx.tx_date }}</td>
+                <td><span class="chip {{ tx.kind }}">{{ tx.kind }}</span></td>
+                <td>{{ tx.account_name }}</td>
+                <td>{{ tx.category_name }}{% if tx.subcategory_name %} · {{ tx.subcategory_name }}{% endif %}</td>
+                <td>{{ tx.note or '—' }}</td>
+                <td class="money positive">{% if tx.kind == 'income' %}Rs {{ tx.amount|format_number }}{% else %}—{% endif %}</td>
+                <td class="money negative">{% if tx.kind == 'expense' %}Rs {{ tx.amount|format_number }}{% else %}—{% endif %}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7"><div class="empty-state">No transactions yet.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-ledger">
+      {% for ledger in data.ledgers %}
+        <div class="panel-body">
+          <h2 style="font-size:15px;margin-bottom:10px;">{{ ledger.account }}</h2>
+          <div class="table-wrap">
+            <table class="accounts-table">
+              <thead><tr><th>Date</th><th>Category</th><th>Note</th><th>Income</th><th>Expense</th><th>Balance</th></tr></thead>
+              <tbody>
+                {% for row in ledger.rows %}
+                  <tr>
+                    <td>{{ row.tx_date }}</td>
+                    <td>{{ row.category_name }}{% if row.subcategory_name %} · {{ row.subcategory_name }}{% endif %}</td>
+                    <td>{{ row.note or '—' }}</td>
+                    <td class="money positive">{% if row.income %}Rs {{ row.income|format_number }}{% else %}—{% endif %}</td>
+                    <td class="money negative">{% if row.expense %}Rs {{ row.expense|format_number }}{% else %}—{% endif %}</td>
+                    <td class="money {% if row.running_balance < 0 %}negative{% endif %}">Rs {{ row.running_balance|format_number }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="6"><div class="empty-state">No ledger entries for {{ ledger.account }}.</div></td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="tab-panel" id="tab-monthly">
+      <div class="table-wrap">
+        <table class="accounts-table">
+          <thead><tr><th>Month</th><th>Income</th><th>Expense</th><th>Profit / Loss</th></tr></thead>
+          <tbody>
+            {% for row in data.monthly|reverse %}
+              <tr>
+                <td>{{ row.label }}</td>
+                <td class="money positive">Rs {{ row.income|format_number }}</td>
+                <td class="money negative">Rs {{ row.expense|format_number }}</td>
+                <td class="money {% if row.profit < 0 %}negative{% else %}positive{% endif %}">Rs {{ row.profit|format_number }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4"><div class="empty-state">No monthly profit/loss yet.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-categories">
+      <div class="panel-body insight-grid">
+        {% for kind, rows in [('income', income_categories), ('expense', expense_categories)] %}
+          <div class="insight-card">
+            <h3>{{ 'Income' if kind == 'income' else 'Expenses' }} <span>All categories</span></h3>
+            <div class="chart-rows">
+              {% set max_category_value = namespace(value=1) %}
+              {% for row in rows %}
+                {% if row.total > max_category_value.value %}{% set max_category_value.value = row.total %}{% endif %}
+              {% endfor %}
+              {% for row in rows %}
+                <div class="chart-row">
+                  <strong>{{ row.category_name }}</strong>
+                  <div class="bar-track"><div class="bar-fill {{ row.kind }}" style="width: {{ ((row.total / max_category_value.value) * 100)|round(1) }}%;"></div></div>
+                  <span class="{% if row.kind == 'expense' %}negative{% else %}positive{% endif %}">Rs {{ row.total|format_number }}</span>
+                </div>
+              {% else %}
+                <div class="empty-state">No {{ kind }} categories yet.</div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+const accountCategories = {{ categories|tojson }};
+
+function rebuildCategories() {
+  const kind = document.querySelector('input[name="kind"]:checked')?.value || 'income';
+  const categorySelect = document.getElementById('categorySelect');
+  const subcategorySelect = document.getElementById('subcategorySelect');
+  const list = accountCategories[kind] || [];
+  categorySelect.innerHTML = list.map(category => `<option value="${category.id}">${category.name}</option>`).join('');
+  rebuildSubcategories();
+}
+
+function rebuildSubcategories() {
+  const kind = document.querySelector('input[name="kind"]:checked')?.value || 'income';
+  const categoryId = Number(document.getElementById('categorySelect').value || 0);
+  const category = (accountCategories[kind] || []).find(item => Number(item.id) === categoryId);
+  const subcategorySelect = document.getElementById('subcategorySelect');
+  const subcategories = category?.subcategories || [];
+  subcategorySelect.innerHTML = subcategories.length
+    ? subcategories.map(item => `<option value="${item.id}">${item.name}</option>`).join('')
+    : '';
+  subcategorySelect.disabled = subcategories.length === 0;
+}
+
+document.querySelectorAll('input[name="kind"]').forEach(input => input.addEventListener('change', rebuildCategories));
+document.getElementById('categorySelect')?.addEventListener('change', rebuildSubcategories);
+rebuildCategories();
+
+document.querySelectorAll('.tab-button').forEach(button => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.tab-button').forEach(item => item.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(item => item.classList.remove('active'));
+    button.classList.add('active');
+    document.getElementById(`tab-${button.dataset.tab}`)?.classList.add('active');
+  });
+});
+</script>
+{% endblock %}

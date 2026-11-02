@@ -1,12 +1,21 @@
-# Aabroo Admin Portal
+# Aabroo Operations Portal
 
-Standalone, read-only Aabroo order and settlement portal operated by Al Karamat. It mirrors the Sleek Space → AghaJe relationship without carrying unrelated Al Karamat services into the deployment.
+Full Aabroo order-operations portal, adapted from the AghaJe workflow and linked to Al Karamat's Aabroo ledger.
 
-## Railway deployment
+## Included workflows
 
-1. Create a Railway project from this GitHub repository.
-2. Add a PostgreSQL service.
-3. Configure every variable listed in `.env.example`.
-4. Deploy and add the custom domain `admin.aabroo.store`.
+- Shopify order dashboard and protected customer/order data
+- Barcode/QR scanner and pending-order processing
+- Employee and admin portals
+- Product lookup and draft-order creation
+- Courier tracking, undelivered follow-up, and PostEx payment views
+- Accounts and owner ledger
+- Paid-order synchronization with the Al Karamat dashboard
 
-The application starts with Gunicorn using `railway.json`; `/health` is the deployment health check.
+## Deployment
+
+The app runs with `gunicorn main:app` and exposes `/health` for Railway. Copy `.env.example` into your deployment environment and provide the Shopify custom-app credentials, database URL, portal passwords, and any courier credentials in use.
+
+Production URL: <https://admin.aabroo.store>
+
+Al Karamat ledger: <https://dashboard.alkaramat.com/aabroo-portal>

@@ -1,0 +1,148 @@
+{% extends 'base.html' %}
+{% block title %}PostEx Payments{% endblock %}
+
+{% block content %}
+<style>
+  .pay-page { height:100%; overflow:auto; padding:18px; }
+  .pay-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+  .pay-title { font-size:22px; font-weight:800; color:#2d2e36; }
+  .pay-sub { font-size:12px; color:#858796; margin-top:3px; }
+  .pay-filters { display:flex; gap:8px; flex-wrap:wrap; align-items:end; background:#fff; border:1px solid #e3e6f0; border-radius:12px; padding:12px; }
+  .pay-field { display:flex; flex-direction:column; gap:5px; }
+  .pay-field label { font-size:10px; font-weight:800; color:#858796; text-transform:uppercase; letter-spacing:.05em; }
+  .pay-input { height:36px; border:1px solid #d8dcea; border-radius:8px; padding:0 10px; font-family:'DM Sans', sans-serif; font-size:12px; color:#2d2e36; background:#fff; }
+  .pay-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(145px, 1fr)); gap:10px; margin-bottom:14px; }
+  .pay-card { background:#fff; border:1px solid #e3e6f0; border-radius:12px; padding:13px 14px; box-shadow:0 1px 5px rgba(0,0,0,.04); }
+  .pay-card-label { font-size:10px; font-weight:800; color:#858796; text-transform:uppercase; letter-spacing:.05em; }
+  .pay-card-value { margin-top:5px; font-family:'DM Mono', monospace; font-size:18px; font-weight:800; color:#2d2e36; }
+  .pay-card.pending .pay-card-value { color:#d4a800; }
+  .pay-card.paid .pay-card-value { color:#1cc88a; }
+  .pay-card.deduct .pay-card-value { color:#e74a3b; }
+  .pay-table-wrap { background:#fff; border:1px solid #e3e6f0; border-radius:12px; overflow:auto; box-shadow:0 1px 5px rgba(0,0,0,.04); }
+  .pay-table { width:100%; border-collapse:collapse; min-width:980px; }
+  .pay-table th { position:sticky; top:0; z-index:1; background:#f8f9fc; color:#858796; font-size:10px; letter-spacing:.05em; text-transform:uppercase; text-align:left; padding:10px 12px; border-bottom:1px solid #e3e6f0; }
+  .pay-table td { padding:11px 12px; border-bottom:1px solid #f0f2f8; font-size:12px; color:#3a3b45; vertical-align:top; }
+  .pay-money { font-family:'DM Mono', monospace; font-weight:800; white-space:nowrap; text-align:right; }
+  .pay-table th.money, .pay-table td.money { text-align:right; }
+  .pay-order { font-weight:800; color:#4e73df; white-space:nowrap; }
+  .pay-track { font-family:'DM Mono', monospace; font-size:11px; color:#2d2e36; white-space:nowrap; }
+  .pay-product { max-width:300px; line-height:1.35; color:#565864; }
+  .pay-status { display:inline-flex; align-items:center; border-radius:999px; padding:3px 9px; font-size:10px; font-weight:800; white-space:nowrap; }
+  .pay-status.pending { background:#fff3cd; color:#8b5a00; }
+  .pay-status.paid { background:#d9f7eb; color:#0e7a53; }
+  .pay-status.unknown { background:#ececec; color:#666; }
+  .pay-error { background:#fde8e6; color:#9d241c; border:1px solid #f4b8b1; border-radius:10px; padding:10px 12px; font-size:12px; font-weight:700; margin-bottom:12px; }
+  .pay-empty { padding:30px; text-align:center; color:#858796; font-size:13px; }
+  @media (max-width:900px) {
+    .pay-summary { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    .pay-page { padding:12px; }
+  }
+</style>
+
+<div class="pay-page">
+  <div class="pay-head">
+    <div>
+      <div class="pay-title">PostEx Payments</div>
+      <div class="pay-sub">Delivered receivables and returned shipment charges are calculated from PostEx order data, not Shopify totals.</div>
+    </div>
+    <form class="pay-filters" method="get">
+      <input type="hidden" name="embedded" value="{{ '1' if embedded_mode else '' }}">
+      <div class="pay-field">
+        <label>Status</label>
+        <select class="pay-input" name="orderStatusId">
+          {% for status_id, label in data.statuses.items() %}
+          <option value="{{ status_id }}" {% if status_id == data.selected_status %}selected{% endif %}>{{ status_id }} - {{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="pay-field">
+        <label>Start Date</label>
+        <input class="pay-input" type="date" name="startDate" value="{{ data.start_date }}">
+      </div>
+      <div class="pay-field">
+        <label>End Date</label>
+        <input class="pay-input" type="date" name="endDate" value="{{ data.end_date }}">
+      </div>
+      <button class="btn btn-primary" type="submit">Apply</button>
+    </form>
+  </div>
+
+  {% if error_message %}
+  <div class="pay-error">{{ error_message }}</div>
+  {% endif %}
+
+  <div class="pay-summary">
+    <div class="pay-card pending">
+      <div class="pay-card-label">Pending Receivable</div>
+      <div class="pay-card-value">PKR {{ data.summary.pending_receivable|float|round|int|format_number }}</div>
+    </div>
+    <div class="pay-card pending">
+      <div class="pay-card-label">Undelivered Amount</div>
+      <div class="pay-card-value">PKR {{ data.summary.undelivered_amount|float|round|int|format_number }}</div>
+    </div>
+    <div class="pay-card deduct">
+      <div class="pay-card-label">Pending Return Charges</div>
+      <div class="pay-card-value">PKR {{ data.summary.pending_payable|float|round|int|format_number }}</div>
+    </div>
+    <div class="pay-card deduct">
+      <div class="pay-card-label">Paid Return Charges</div>
+      <div class="pay-card-value">PKR {{ data.summary.paid_payable|float|round|int|format_number }}</div>
+    </div>
+    <div class="pay-card paid">
+      <div class="pay-card-label">Paid</div>
+      <div class="pay-card-value">PKR {{ data.summary.paid_receivable|float|round|int|format_number }}</div>
+    </div>
+    <div class="pay-card">
+      <div class="pay-card-label">Net Receivable</div>
+      <div class="pay-card-value">PKR {{ data.summary.net_receivable|float|round|int|format_number }}</div>
+    </div>
+    <div class="pay-card deduct">
+      <div class="pay-card-label">Shipping Fee</div>
+      <div class="pay-card-value">PKR {{ data.summary.shipping_fee|float|round|int|format_number }}</div>
+    </div>
+    <div class="pay-card deduct">
+      <div class="pay-card-label">4% Delivered Tax</div>
+      <div class="pay-card-value">PKR {{ data.summary.delivered_tax|float|round|int|format_number }}</div>
+    </div>
+  </div>
+
+  <div class="pay-table-wrap">
+    <table class="pay-table">
+      <thead>
+        <tr>
+          <th>Order ID</th>
+          <th>Tracking#</th>
+          <th>Delivery Status</th>
+          <th>Product</th>
+          <th class="money">Shipping Fee</th>
+          <th class="money">4% Tax</th>
+          <th class="money">Net Receivable / Payable</th>
+          <th>Payment Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in data.rows %}
+        <tr>
+          <td><span class="pay-order">{{ row.order_id or 'N/A' }}</span></td>
+          <td><span class="pay-track">{{ row.tracking_number }}</span></td>
+          <td>{{ row.transaction_status or 'N/A' }}</td>
+          <td><div class="pay-product">{{ row.product or 'No product detail' }}</div></td>
+          <td class="pay-money money">PKR {{ row.shipping_fee|float|round|int|format_number }}</td>
+          <td class="pay-money money">PKR {{ row.delivered_tax|float|round|int|format_number }}</td>
+          <td class="pay-money money">{% if row.net_receivable < 0 %}-{% endif %}PKR {{ row.net_receivable|abs|float|round|int|format_number }}</td>
+          <td>
+            <span class="pay-status {{ row.payment_status|lower }}">{{ row.payment_status }}</span>
+            {% if row.is_returned %}<div style="font-size:10px;color:#e74a3b;margin-top:4px;">Return charge</div>{% endif %}
+            {% if row.settlement_date %}<div style="font-size:10px;color:#858796;margin-top:4px;">{{ row.settlement_date }}</div>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8"><div class="pay-empty">No PostEx orders found for this status/date range.</div></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

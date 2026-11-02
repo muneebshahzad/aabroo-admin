@@ -1,0 +1,692 @@
+{% extends 'base.html' %}
+{% block title %}Aabroo – Pending Orders{% endblock %}
+
+{% block content %}
+<style>
+  html, body { min-height: 100%; height: auto; overflow-y: auto; }
+  #app { min-height: 100vh; height: auto; overflow: visible; }
+  #main { min-height: 100vh; height: auto; overflow: visible; display: block; }
+  .pending-shell { display:flex; flex-direction:column; min-height:100vh; overflow:visible; }
+  .pending-topbar { height:52px; background:#fff; border-bottom:1px solid #e3e6f0; display:flex; align-items:center; padding:0 20px; gap:12px; flex-shrink:0; }
+  .pending-title { font-size:16px; font-weight:700; color:#3a3b45; }
+  .pending-scroll { flex:1 1 auto; min-height:0; overflow:visible; padding:16px; display:flex; flex-direction:column; gap:16px; }
+  .stats-grid { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:12px; }
+  .section-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; align-items:start; }
+  .summary-list, .order-list { display:flex; flex-direction:column; gap:10px; }
+  .summary-row { display:grid; grid-template-columns:56px 1fr auto auto; gap:12px; align-items:center; padding:10px 12px; border:1px solid #e3e6f0; border-radius:10px; background:#fff; }
+  .summary-thumb { width:56px; height:56px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
+  .summary-thumb img { width:100%; height:100%; object-fit:cover; }
+  .summary-title { font-size:13px; font-weight:700; color:#2d2e36; margin-bottom:4px; }
+  .summary-meta { font-size:11px; color:#858796; display:flex; gap:8px; flex-wrap:wrap; }
+  .summary-pricing { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; font-size:10px; color:#6f7280; }
+  .summary-qty { font-size:22px; font-weight:800; color:#4e73df; }
+  .order-card { border:1px solid #e3e6f0; border-radius:12px; background:#fff; overflow:hidden; }
+  .order-head { padding:12px 14px; display:flex; align-items:flex-start; gap:12px; }
+  .order-id { font-family:'DM Mono', monospace; font-size:14px; font-weight:700; color:#4e73df; text-decoration:none; }
+  .order-date { font-size:10px; color:#b0b2be; margin-top:2px; }
+  .order-tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+  .order-body { border-top:1px solid #eef0f6; padding:12px 14px; display:grid; grid-template-columns:1.1fr .9fr; gap:14px; }
+  .order-items { display:flex; flex-direction:column; gap:8px; }
+  .item-row { display:grid; grid-template-columns:44px 1fr auto auto; gap:10px; align-items:center; padding:8px 10px; border:1px solid #e8eaef; border-radius:9px; background:#f8f9fc; }
+  .item-row img { width:44px; height:44px; border-radius:8px; object-fit:cover; }
+  .item-title { font-size:12px; font-weight:600; color:#2d2e36; }
+  .item-meta { font-size:10px; color:#858796; margin-top:2px; }
+  .item-qty { font-size:11px; font-weight:700; color:#4e73df; white-space:nowrap; }
+  .quick-add-btn { width:34px; height:34px; border-radius:10px; border:1px solid #d7dceb; background:#fff; color:#4e73df; font-size:20px; line-height:1; font-weight:700; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all .15s; }
+  .quick-add-btn:hover { background:#eef3ff; border-color:#b8c7f0; }
+  .vendor-panel { padding:14px 16px; display:flex; flex-direction:column; gap:12px; min-height:420px; }
+  .vendor-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .vendor-actions { display:flex; align-items:center; gap:12px; }
+  .vendor-count { display:inline-flex; align-items:center; justify-content:center; min-width:24px; height:24px; padding:0 8px; border-radius:999px; background:#eef3ff; color:#4e73df; font-size:11px; font-weight:700; }
+  .vendor-open { border:none; background:none; color:#4e73df; font-size:11px; font-weight:700; cursor:pointer; padding:0; }
+  .vendor-add { border:none; background:none; color:#1cc88a; font-size:11px; font-weight:700; cursor:pointer; padding:0; }
+  .vendor-clear { border:none; background:none; color:#858796; font-size:11px; font-weight:700; cursor:pointer; padding:0; }
+  .vendor-list { display:flex; flex-direction:column; gap:10px; }
+  .vendor-custom-form { border:1px solid #dce2ee; border-radius:12px; background:#f8faff; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .vendor-custom-grid { display:grid; grid-template-columns:1fr 1fr 1fr 90px; gap:10px; }
+  .vendor-item { border:1px solid #e3e6f0; border-radius:12px; background:#fff; padding:12px; display:grid; grid-template-columns:52px 1fr auto; gap:10px; align-items:start; }
+  .vendor-thumb { width:52px; height:52px; border-radius:10px; overflow:hidden; background:#f2f4f8; display:flex; align-items:center; justify-content:center; }
+  .vendor-thumb img { width:100%; height:100%; object-fit:cover; }
+  .vendor-fields { display:flex; flex-direction:column; gap:8px; min-width:0; }
+  .vendor-input { width:100%; border:1px solid #dce2ee; border-radius:9px; padding:8px 10px; font-size:12px; font-family:'DM Sans', sans-serif; color:#2d2e36; background:#fff; }
+  .vendor-qty-wrap { display:flex; align-items:center; gap:8px; }
+  .vendor-qty-label { font-size:10px; color:#858796; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
+  .vendor-remove { width:30px; height:30px; border-radius:9px; border:1px solid #f1d0cb; background:#fff4f2; color:#c0392b; font-size:16px; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .vendor-custom-actions { display:flex; justify-content:flex-end; gap:8px; }
+  .vendor-secondary-btn, .vendor-primary-btn { border-radius:9px; padding:8px 12px; font-size:11px; font-weight:700; cursor:pointer; font-family:'DM Sans', sans-serif; }
+  .vendor-secondary-btn { border:1px solid #dce2ee; background:#fff; color:#858796; }
+  .vendor-primary-btn { border:1px solid #1cc88a; background:#1cc88a; color:#fff; }
+  .vendor-empty { flex:1; border:1px dashed #d6dbea; border-radius:14px; background:#fafbfe; color:#858796; font-size:13px; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; min-height:220px; }
+  .vendor-note { font-size:11px; color:#858796; line-height:1.5; }
+  .vendor-money { display:flex; gap:10px; flex-wrap:wrap; font-size:10px; color:#6f7280; }
+  .order-side { display:flex; flex-direction:column; gap:10px; }
+  .mini-block { padding:10px 12px; border:1px solid #e8eaef; border-radius:10px; background:#fff; }
+  .mini-label { font-size:10px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#858796; margin-bottom:6px; }
+  .mini-value { font-size:12px; color:#2d2e36; line-height:1.45; }
+  .money-line { display:flex; justify-content:space-between; gap:10px; font-size:11px; color:#6f7280; margin-top:6px; }
+  .money-line strong { color:#2d2e36; }
+  .empty-state { padding:34px 16px; text-align:center; color:#858796; font-size:13px; }
+  @media (max-width: 900px) {
+    .section-grid, .order-body { grid-template-columns:1fr; }
+  }
+  @media (max-width: 767px) {
+    .pending-topbar { padding:0 14px; }
+    .pending-scroll { padding:12px; }
+    .stats-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
+    .summary-row { grid-template-columns:48px 1fr auto auto; gap:10px; }
+    .summary-thumb { width:48px; height:48px; }
+    .item-row { grid-template-columns:44px 1fr auto auto; }
+    .vendor-custom-grid { grid-template-columns:1fr; }
+    .vendor-item { grid-template-columns:48px 1fr; }
+    .vendor-remove { grid-column: 1 / -1; justify-self:end; }
+  }
+</style>
+
+<div class="pending-shell">
+  <div class="pending-topbar">
+    <span class="pending-title">Pending Orders</span>
+    <div style="flex:1"></div>
+    <span style="font-size:11px;color:#858796;">{{ all_orders|length }} order{{ '' if all_orders|length == 1 else 's' }} waiting</span>
+  </div>
+
+  <div class="pending-scroll">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(78,115,223,0.1)">📋</div><div><div class="stat-label">Orders</div><div class="stat-value" style="color:#4e73df">{{ all_orders|length }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(28,200,138,0.1)">📦</div><div><div class="stat-label">Unique Items</div><div class="stat-value" style="color:#1cc88a">{{ pending_items|length }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(246,194,62,0.12)">🏷️</div><div><div class="stat-label">Booked</div><div class="stat-value" style="color:#f6c23e">{{ all_orders|selectattr('status', 'equalto', 'Booked')|list|length }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(133,135,150,0.12)">⌛</div><div><div class="stat-label">Un-Booked</div><div class="stat-value" style="color:#858796">{{ all_orders|selectattr('status', 'equalto', 'Un-Booked')|list|length }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(54,185,204,0.12)">🪙</div><div><div class="stat-label">Items Cost</div><div class="stat-value" style="color:#36b9cc">PKR {{ summary.total_items_cost|format_number }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(28,200,138,0.12)">💳</div><div><div class="stat-label">Paid Value</div><div class="stat-value" style="color:#1cc88a">PKR {{ summary.paid_pending_value|format_number }}</div></div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(231,74,59,0.10)">🧾</div><div><div class="stat-label">Unpaid Value</div><div class="stat-value" style="color:#e74a3b">PKR {{ summary.unpaid_pending_value|format_number }}</div></div></div>
+    </div>
+
+    <div class="section-grid">
+      <div class="section-card">
+        <div class="section-header">
+          <span style="font-size:14px;font-weight:700;color:#3a3b45;">Item Summary</span>
+          <span class="section-count">{{ pending_items|length }}</span>
+        </div>
+        <div class="summary-list" style="padding:12px;">
+          {% for item in pending_items %}
+          <div class="summary-row">
+            <div class="summary-thumb">
+              {% if item.item_image %}<img src="{{ item.item_image }}" alt="">{% else %}📦{% endif %}
+            </div>
+            <div>
+              <div class="summary-title">{{ item.item_title }}</div>
+              <div class="summary-meta">
+                {% for status, qty in item.statuses.items() %}
+                <span>{{ status }}: {{ qty }}</span>
+                {% endfor %}
+              </div>
+              <div class="summary-pricing">
+                <span>Price: PKR {{ item.unit_price|format_number }}</span>
+                <span>Cost: PKR {{ item.unit_cost|format_number }}</span>
+                <span>Total: PKR {{ item.total_cost|format_number }}</span>
+              </div>
+            </div>
+            <div class="summary-qty">{{ item.quantity }}</div>
+            <button
+              class="quick-add-btn"
+              type="button"
+              data-key="{{ item.item_title ~ '|' ~ (item.item_image or '') }}"
+              data-title="{{ item.item_title }}"
+              data-quantity="{{ item.quantity|int }}"
+              data-image="{{ item.item_image or '' }}"
+              data-price="{{ item.unit_price }}"
+              data-cost="{{ item.unit_cost }}"
+              onclick="addVendorItemFromButton(this)"
+              title="Add to vendor list"
+            >+</button>
+          </div>
+          {% else %}
+          <div class="empty-state">No pending items right now.</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-header">
+          <span style="font-size:14px;font-weight:700;color:#3a3b45;">Vendor List</span>
+        </div>
+        <div class="vendor-panel">
+          <div class="vendor-top">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:13px;font-weight:700;color:#3a3b45;">Selected items</span>
+              <span class="vendor-count" id="vendorCount">0</span>
+            </div>
+            <div class="vendor-actions">
+              <button class="vendor-add" type="button" onclick="toggleCustomVendorForm(true)">Add custom</button>
+              <button class="vendor-open" type="button" onclick="openVendorListPage()">Show list</button>
+              <button class="vendor-open" type="button" onclick="openVendorInvoicePage()">Create invoice</button>
+              <button class="vendor-clear" type="button" onclick="clearVendorList()">Clear all</button>
+            </div>
+          </div>
+          <div class="vendor-custom-form" id="vendorCustomForm" style="display:none;">
+            <div class="vendor-custom-grid">
+              <input class="vendor-input" id="customVendorName" type="text" placeholder="Product name" />
+              <input class="vendor-input" id="customVendorImage" type="url" placeholder="Image URL" />
+              <input class="vendor-input" id="customVendorCost" type="number" min="0" step="0.01" value="0" placeholder="Cost" />
+              <input class="vendor-input" id="customVendorQty" type="number" min="1" step="1" value="1" placeholder="Qty" />
+            </div>
+            <div class="vendor-custom-actions">
+              <button class="vendor-secondary-btn" type="button" onclick="toggleCustomVendorForm(false)">Cancel</button>
+              <button class="vendor-primary-btn" type="button" onclick="saveCustomVendorItem()">Add item</button>
+            </div>
+          </div>
+          <div class="vendor-list" id="vendorList"></div>
+          <div class="vendor-empty" id="vendorEmpty">
+            Click the <strong style="margin:0 4px;">+</strong> beside any item to build your vendor list here.
+          </div>
+          <div class="vendor-note">
+            This list is only for you in this browser. You can rename products, tweak quantities, and it will stay after refresh.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-header">
+        <span style="font-size:14px;font-weight:700;color:#3a3b45;">Pending Order Queue</span>
+        <span class="section-count">{{ all_orders|length }}</span>
+      </div>
+      <div class="order-list" style="padding:12px;">
+        {% for order in all_orders %}
+        <div class="order-card">
+          <div class="order-head">
+            <div style="flex:1;min-width:0;">
+              <a class="order-id" href="{{ order.order_link or '#' }}" target="_blank">#{{ order.order_id }}</a>
+              <div class="order-date">{{ order.date }}</div>
+              {% if order.tags %}
+              <div class="order-tags">
+                {% for tag in order.tags %}
+                <span class="tag-badge" style="{{ tag_style(tag) }}">{{ tag }}</span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            {{ status_badge(order.status) }}
+          </div>
+          <div class="order-body">
+            <div class="order-items">
+              {% for item in order.items_list %}
+              <div class="item-row">
+                {% if item.item_image %}<img src="{{ item.item_image }}" alt="">{% else %}<div style="width:44px;height:44px;border-radius:8px;background:#e3e6f0;display:flex;align-items:center;justify-content:center;">📦</div>{% endif %}
+                <div style="min-width:0;">
+                  <div class="item-title">{{ item.item_title }}</div>
+                  <div class="item-meta">
+                    {% if item.tracking_number and item.tracking_number != 'N/A' %}
+                    <a href="/track/{{ item.tracking_number }}" target="_blank" style="color:#4e73df;text-decoration:none;">{{ item.tracking_number }}</a>
+                    {% else %}
+                    No tracking yet
+                    {% endif %}
+                    · {{ item.status }}
+                    {% if item.applied_status %} · {{ item.applied_status }}{% endif %}
+                    · Cost PKR {{ item.unit_cost|format_number }}
+                  </div>
+                </div>
+                <div class="item-qty">x{{ item.quantity }}</div>
+                <button
+                  class="quick-add-btn"
+                  type="button"
+                  data-key="{{ order.order_id ~ '|' ~ item.item_title ~ '|' ~ (item.tracking_number or '') ~ '|' ~ loop.index0 }}"
+                  data-title="{{ item.item_title }}"
+                  data-quantity="{{ item.quantity|int }}"
+                  data-image="{{ item.item_image or '' }}"
+                  data-price="{{ item.unit_price }}"
+                  data-cost="{{ item.unit_cost }}"
+                  onclick="addVendorItemFromButton(this)"
+                  title="Add to vendor list"
+                >+</button>
+              </div>
+              {% endfor %}
+            </div>
+            <div class="order-side">
+              <div class="mini-block">
+                <div class="mini-label">Customer</div>
+                <div class="mini-value">
+                  {{ order.customer_name or 'No customer name' }}
+                  {% if order.customer_phone %}<br>{{ order.customer_phone }}{% endif %}
+                  {% if order.customer_address %}<br>{{ order.customer_address }}{% endif %}
+                  {% if order.customer_city %}<br>{{ order.customer_city }}{% endif %}
+                </div>
+              </div>
+              <div class="mini-block">
+                <div class="mini-label">Totals</div>
+                <div class="money-line"><span>Subtotal</span><strong>PKR {{ order.subtotal_price|format_number }}</strong></div>
+                {% if order.shipping_charges %}
+                <div class="money-line"><span>Shipping</span><strong>PKR {{ order.shipping_charges|format_number }}</strong></div>
+                {% endif %}
+                {% if order.total_discounts %}
+                <div class="money-line"><span>Discounts</span><strong>- PKR {{ order.total_discounts|format_number }}</strong></div>
+                {% endif %}
+                <div class="money-line"><span>Total</span><strong>PKR {{ order.total_price|format_number }}</strong></div>
+                <div class="money-line"><span>Pending items cost</span><strong>PKR {{ order.pending_total_cost|format_number }}</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-state">No pending Shopify orders right now.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const vendorStorageKey = 'aabroo_vendor_list_v1';
+  let vendorItems = [];
+
+  function loadVendorItems() {
+    try {
+      vendorItems = JSON.parse(localStorage.getItem(vendorStorageKey) || '[]');
+      if (!Array.isArray(vendorItems)) vendorItems = [];
+    } catch (error) {
+      vendorItems = [];
+    }
+  }
+
+  function saveVendorItems() {
+    localStorage.setItem(vendorStorageKey, JSON.stringify(vendorItems));
+  }
+
+  function addVendorItem(item) {
+    const normalizedKey = String(item.key || item.title || '').trim();
+    const existing = vendorItems.find((entry) => entry.key === normalizedKey);
+    if (existing) {
+      existing.quantity = Number(existing.quantity || 0) + Number(item.quantity || 1);
+    } else {
+      vendorItems.push({
+        key: normalizedKey,
+        title: String(item.title || 'Vendor item'),
+        quantity: Number(item.quantity || 1),
+        image: String(item.image || ''),
+        price: Number(item.price || 0),
+        cost: Number(item.cost || 0),
+      });
+    }
+    saveVendorItems();
+    renderVendorItems();
+  }
+
+  function addVendorItemFromButton(button) {
+    addVendorItem({
+      key: button.dataset.key || button.dataset.title || '',
+      title: button.dataset.title || 'Vendor item',
+      quantity: Number(button.dataset.quantity || 1),
+      image: button.dataset.image || '',
+      price: Number(button.dataset.price || 0),
+      cost: Number(button.dataset.cost || 0),
+    });
+  }
+
+  function updateVendorTitle(index, value) {
+    if (!vendorItems[index]) return;
+    vendorItems[index].title = value;
+    saveVendorItems();
+  }
+
+  function updateVendorQuantity(index, value) {
+    if (!vendorItems[index]) return;
+    const parsed = Math.max(1, parseInt(value || '1', 10) || 1);
+    vendorItems[index].quantity = parsed;
+    saveVendorItems();
+    renderVendorItems();
+  }
+
+  function updateVendorCost(index, value) {
+    if (!vendorItems[index]) return;
+    vendorItems[index].cost = Math.max(0, Number(value || 0));
+    saveVendorItems();
+    renderVendorItems();
+  }
+
+  function removeVendorItem(index) {
+    vendorItems.splice(index, 1);
+    saveVendorItems();
+    renderVendorItems();
+  }
+
+  function clearVendorList() {
+    vendorItems = [];
+    saveVendorItems();
+    renderVendorItems();
+  }
+
+  function toggleCustomVendorForm(forceOpen) {
+    const form = document.getElementById('vendorCustomForm');
+    if (!form) return;
+    const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : form.style.display === 'none';
+    form.style.display = shouldOpen ? 'flex' : 'none';
+    if (shouldOpen) {
+      const nameInput = document.getElementById('customVendorName');
+      if (nameInput) nameInput.focus();
+    } else {
+      resetCustomVendorForm();
+    }
+  }
+
+  function resetCustomVendorForm() {
+    const nameInput = document.getElementById('customVendorName');
+    const imageInput = document.getElementById('customVendorImage');
+    const costInput = document.getElementById('customVendorCost');
+    const qtyInput = document.getElementById('customVendorQty');
+    if (nameInput) nameInput.value = '';
+    if (imageInput) imageInput.value = '';
+    if (costInput) costInput.value = '0';
+    if (qtyInput) qtyInput.value = '1';
+  }
+
+  function saveCustomVendorItem() {
+    const nameInput = document.getElementById('customVendorName');
+    const imageInput = document.getElementById('customVendorImage');
+    const costInput = document.getElementById('customVendorCost');
+    const qtyInput = document.getElementById('customVendorQty');
+    const title = String(nameInput?.value || '').trim();
+    const image = String(imageInput?.value || '').trim();
+    const cost = Math.max(0, Number(costInput?.value || 0));
+    const quantity = Math.max(1, parseInt(qtyInput?.value || '1', 10) || 1);
+    if (!title) {
+      if (nameInput) nameInput.focus();
+      return;
+    }
+    addVendorItem({
+      key: `custom|${title.toLowerCase()}|${image}`,
+      title,
+      quantity,
+      image,
+      price: 0,
+      cost,
+    });
+    toggleCustomVendorForm(false);
+  }
+
+  function buildVendorListHtml(items) {
+    const safeItems = Array.isArray(items) ? items : [];
+    const midpoint = Math.ceil(safeItems.length / 2);
+    const leftItems = safeItems.slice(0, midpoint);
+    const rightItems = safeItems.slice(midpoint);
+
+    function cellGroup(item, dividerClass) {
+      if (!item) {
+        return `
+          <td class="name ${dividerClass}"></td>
+          <td class="image-cell"></td>
+          <td class="qty"></td>
+        `;
+      }
+      return `
+        <td class="name ${dividerClass}">${escapeHtml(item.title || '')}</td>
+        <td class="image-cell">${item.image ? `<img class="product-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || '')}">` : ''}</td>
+        <td class="qty">${Number(item.quantity || 0)}</td>
+      `;
+    }
+
+    const rows = Array.from({ length: Math.max(leftItems.length, rightItems.length) }, (_, index) => `
+      <tr>
+        ${cellGroup(leftItems[index], '')}
+        ${cellGroup(rightItems[index], 'divider')}
+      </tr>
+    `).join('');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Selected Vendor Items</title>
+  <style>
+    :root { --bg:#f6f7fb; --panel:#ffffff; --text:#202331; --muted:#687085; --line:#dfe3ec; --head:#eef2f8; --divider:#b9c2d3; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.35; }
+    main { width:min(1380px, calc(100% - 24px)); margin:18px auto; }
+    .header { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:12px; }
+    h1 { margin:0; font-size:24px; line-height:1.15; }
+    .summary { margin:4px 0 0; color:var(--muted); }
+    .count { flex:0 0 auto; padding:7px 11px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--muted); font-weight:700; }
+    .table-wrap { border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 10px 26px rgba(25,34,62,0.08); overflow:hidden; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; }
+    th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+    th { background:var(--head); color:#30364a; font-size:12px; font-weight:800; text-transform:uppercase; }
+    tbody tr:last-child td { border-bottom:0; }
+    tbody tr:hover { background:#fafbff; }
+    .name { width:22%; font-weight:700; overflow-wrap:anywhere; }
+    .image-cell { width:18%; }
+    .qty { width:7%; font-size:18px; font-weight:800; text-align:center; }
+    .divider { border-left:3px solid var(--divider); }
+    .product-image { display:block; width:120px; height:120px; object-fit:contain; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    @media (max-width:900px) {
+      main { width:min(100% - 16px, 760px); }
+      .header { align-items:flex-start; flex-direction:column; }
+      .table-wrap { overflow-x:auto; }
+      table { min-width:860px; }
+    }
+    @media print {
+      body { background:#fff; }
+      main { width:100%; margin:0; }
+      .table-wrap { border:0; box-shadow:none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="header">
+      <div>
+        <h1>Selected Vendor Items</h1>
+        <p class="summary">Split table view with product names, images, and quantities.</p>
+      </div>
+      <div class="count">${safeItems.length} item${safeItems.length === 1 ? '' : 's'}</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Image</th>
+            <th>Quantity</th>
+            <th class="divider">Name</th>
+            <th>Image</th>
+            <th>Quantity</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>`;
+  }
+
+  function openVendorListPage() {
+    if (!vendorItems.length) return;
+    const html = buildVendorListHtml(vendorItems);
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const popup = window.open(url, '_blank');
+    if (!popup) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    popup.addEventListener('load', () => {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, { once: true });
+  }
+
+  function buildVendorInvoiceHtml(items) {
+    const safeItems = Array.isArray(items) ? items : [];
+    const rows = safeItems.map((item) => {
+      const qty = Math.max(1, Number(item.quantity || 1));
+      const price = Math.max(0, Number(item.price || 0));
+      const total = Math.max(0, price * qty);
+      return `
+        <tr>
+          <td class="name">${escapeHtml(item.title || '')}</td>
+          <td class="image-cell">${item.image ? `<img class="product-image" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title || '')}">` : ''}</td>
+          <td class="qty">${qty}</td>
+          <td class="money">PKR ${price.toLocaleString('en-PK')}</td>
+          <td class="money strong">PKR ${total.toLocaleString('en-PK')}</td>
+        </tr>
+      `;
+    }).join('');
+    const subtotal = safeItems.reduce((sum, item) => {
+      const qty = Math.max(1, Number(item.quantity || 1));
+      const price = Math.max(0, Number(item.price || 0));
+      return sum + (price * qty);
+    }, 0);
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vendor Invoice</title>
+  <style>
+    :root { --bg:#f6f7fb; --panel:#fff; --text:#202331; --muted:#687085; --line:#dfe3ec; --head:#eef2f8; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Arial,Helvetica,sans-serif; font-size:14px; line-height:1.35; }
+    main { width:min(1180px, calc(100% - 24px)); margin:18px auto 28px; }
+    .header { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:12px; }
+    h1 { margin:0; font-size:24px; line-height:1.15; }
+    .summary { margin:4px 0 0; color:var(--muted); }
+    .count { flex:0 0 auto; padding:7px 11px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--muted); font-weight:700; }
+    .table-wrap { border:1px solid var(--line); border-radius:8px; background:var(--panel); box-shadow:0 10px 26px rgba(25,34,62,0.08); overflow:hidden; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; }
+    th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+    th { background:var(--head); color:#30364a; font-size:12px; font-weight:800; text-transform:uppercase; }
+    tbody tr:last-child td { border-bottom:0; }
+    tbody tr:hover { background:#fafbff; }
+    .name { width:34%; font-weight:700; overflow-wrap:anywhere; }
+    .image-cell { width:22%; }
+    .qty { width:10%; font-size:18px; font-weight:800; text-align:center; }
+    .money { width:17%; white-space:nowrap; }
+    .strong { font-weight:800; }
+    .product-image { display:block; width:110px; height:110px; object-fit:contain; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .totals { margin-top:12px; display:flex; justify-content:flex-end; }
+    .totals-card { min-width:320px; border:1px solid var(--line); border-radius:10px; background:var(--panel); box-shadow:0 10px 26px rgba(25,34,62,0.08); padding:14px 16px; }
+    .totals-row { display:flex; justify-content:space-between; gap:12px; margin-top:8px; }
+    .totals-row strong { font-size:16px; }
+    @media (max-width:900px) {
+      main { width:min(100% - 16px, 760px); }
+      .header { align-items:flex-start; flex-direction:column; }
+      .table-wrap { overflow-x:auto; }
+      table { min-width:920px; }
+      .totals { justify-content:stretch; }
+      .totals-card { min-width:100%; }
+    }
+    @media print {
+      body { background:#fff; }
+      main { width:100%; margin:0; }
+      .table-wrap, .totals-card { box-shadow:none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="header">
+      <div>
+        <h1>Vendor Invoice</h1>
+        <p class="summary">Product names, images, quantities, and selling price totals.</p>
+      </div>
+      <div class="count">${safeItems.length} item${safeItems.length === 1 ? '' : 's'}</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Image</th>
+            <th>Qty</th>
+            <th>Price</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="5" style="text-align:center;color:#687085;padding:18px;">No items selected.</td></tr>'}</tbody>
+      </table>
+    </div>
+    <div class="totals">
+      <div class="totals-card">
+        <div class="totals-row"><span>Subtotal</span><strong>PKR ${subtotal.toLocaleString('en-PK')}</strong></div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>`;
+  }
+
+  function openVendorInvoicePage() {
+    if (!vendorItems.length) return;
+    const html = buildVendorInvoiceHtml(vendorItems);
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const popup = window.open(url, '_blank');
+    if (!popup) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    popup.addEventListener('load', () => {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, { once: true });
+  }
+
+  function renderVendorItems() {
+    const list = document.getElementById('vendorList');
+    const empty = document.getElementById('vendorEmpty');
+    const count = document.getElementById('vendorCount');
+    if (!list || !empty || !count) return;
+
+    count.textContent = vendorItems.length;
+    if (!vendorItems.length) {
+      list.innerHTML = '';
+      empty.style.display = 'flex';
+      return;
+    }
+
+    empty.style.display = 'none';
+    list.innerHTML = vendorItems.map((item, index) => `
+      <div class="vendor-item">
+        <div class="vendor-thumb">${item.image ? `<img src="${item.image}" alt="">` : '📦'}</div>
+        <div class="vendor-fields">
+          <input
+            class="vendor-input"
+            type="text"
+            value="${escapeHtml(item.title || '')}"
+            oninput="updateVendorTitle(${index}, this.value)"
+            placeholder="Product name"
+          />
+          <div class="vendor-qty-wrap">
+            <span class="vendor-qty-label">Qty</span>
+            <input
+              class="vendor-input"
+              style="max-width:90px;"
+              type="number"
+              min="1"
+              step="1"
+              value="${Number(item.quantity || 1)}"
+              oninput="updateVendorQuantity(${index}, this.value)"
+            />
+          </div>
+          <div class="vendor-money">
+            <span>Price: PKR ${Number(item.price || 0).toLocaleString('en-PK')}</span>
+            <span>Cost: PKR <input class="vendor-input" style="max-width:90px;display:inline-block;margin-left:4px;" type="number" min="0" step="0.01" value="${Number(item.cost || 0)}" oninput="updateVendorCost(${index}, this.value)"></span>
+            <span>Total: PKR ${(Number(item.cost || 0) * Number(item.quantity || 0)).toLocaleString('en-PK')}</span>
+          </div>
+        </div>
+        <button class="vendor-remove" type="button" onclick="removeVendorItem(${index})">×</button>
+      </div>
+    `).join('');
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  loadVendorItems();
+  renderVendorItems();
+</script>
+{% endblock %}

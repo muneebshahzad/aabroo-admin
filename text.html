@@ -1,0 +1,35 @@
+@app.route('/add_expense', methods=['POST'])
+def add_expense():
+    connection = check_database_connection()
+
+    if connection:
+        try:
+            cursor = connection.cursor()
+
+            amount = request.form['amount']
+            expense_title = request.form['expense_type']
+            payment_to = request.form['expense_subtype']
+            description = request.form.get('description', '')
+            submission_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            income_expense_name = f"{expense_title} - {payment_to}"
+
+            cursor.execute("""
+                INSERT INTO IncomeExpenseTable (Income_Expense_Name, Description, Amount, Type, [Payment_Date & Time])
+                VALUES (%s, %s, %s, %s, %s)
+            """, (income_expense_name, description, amount, 'Expense', submission_datetime))
+
+            # Commit the transaction
+            connection.commit()
+
+            return jsonify({'status': 'success', 'message': 'Expense successfully added!'})
+
+        except Exception as e:
+            connection.rollback()
+            print(f"Error in add_income route: {str(e)}")
+            return jsonify({'status': 'error', 'message': 'Error in adding Expense'})
+
+        finally:
+            connection.close()
+    else:
+        return jsonify({'status': 'error', 'message': 'Error: No database connection'})
