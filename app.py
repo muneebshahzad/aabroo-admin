@@ -1,5 +1,7 @@
 import json
 import os
+import threading
+import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -11,6 +13,9 @@ from psycopg2.extras import RealDictCursor
 app = Flask(__name__)
 app.secret_key = os.environ.get("APP_SECRET_KEY", "change-me-in-production")
 app.config.update(SESSION_COOKIE_SECURE=os.environ.get("FLASK_ENV") == "production", SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+
+_shopify_token = {"value": "", "expires_at": 0.0}
+_shopify_token_lock = threading.Lock()
 
 
 @app.template_filter("format_number")
@@ -81,11 +86,43 @@ def shopify_base():
     return f"https://{parsed.netloc or parsed.path}/admin/api/{os.environ.get('AABROO_ADMIN_API_VERSION', '2026-04')}"
 
 
+def shopify_access_token():
+    static_token = os.environ.get("AABROO_ACCESS_TOKEN", "").strip()
+    if static_token:
+        return static_token
+
+    now = time.monotonic()
+    if _shopify_token["value"] and now < _shopify_token["expires_at"]:
+        return _shopify_token["value"]
+
+    with _shopify_token_lock:
+        now = time.monotonic()
+        if _shopify_token["value"] and now < _shopify_token["expires_at"]:
+            return _shopify_token["value"]
+
+        client_id = os.environ.get("AABROO_CLIENT_ID", "").strip()
+        client_secret = os.environ.get("AABROO_CLIENT_SECRET", "").strip()
+        if not client_id or not client_secret:
+            raise RuntimeError("AABROO_CLIENT_ID and AABROO_CLIENT_SECRET are not configured")
+
+        shop_url = shopify_base().split("/admin/api/", 1)[0]
+        response = requests.post(
+            f"{shop_url}/admin/oauth/access_token",
+            data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret},
+            timeout=25,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        token = str(payload.get("access_token") or "").strip()
+        if not token:
+            raise RuntimeError("Shopify did not return an access token")
+        expires_in = max(int(payload.get("expires_in") or 86400), 300)
+        _shopify_token.update(value=token, expires_at=time.monotonic() + expires_in - 120)
+        return token
+
+
 def shopify_headers():
-    token = os.environ.get("AABROO_ACCESS_TOKEN", "").strip()
-    if not token:
-        raise RuntimeError("AABROO_ACCESS_TOKEN is not configured")
-    return {"X-Shopify-Access-Token": token, "Accept": "application/json"}
+    return {"X-Shopify-Access-Token": shopify_access_token(), "Accept": "application/json"}
 
 
 def next_link(header):
