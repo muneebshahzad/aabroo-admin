@@ -42,6 +42,10 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(digidokaan.configuration())
 
+    def test_normalizes_local_pakistani_phone_for_api_login(self):
+        with patch.dict(os.environ, {"DIGIDOKAAN_PHONE": "03211180807", "DIGIDOKAAN_PASSWORD": "0320"}, clear=True):
+            self.assertEqual(digidokaan.configuration()["phone"], "923211180807")
+
     async def test_concurrent_requests_are_deduplicated_and_cached(self):
         async def delayed_status(*_args):
             await asyncio.sleep(0)
@@ -153,6 +157,16 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         self.assertIs(second, first)
         self.assertEqual(len(session.calls), 1)
         self.assertTrue(session.calls[0][0][0].endswith("/api/courier/get_shipper_advice_order"))
+
+    async def test_no_pending_shipper_advice_is_a_valid_empty_queue(self):
+        config = {"base_url": "https://digidokaan.example", "phone": "923000000000", "password": "secret", "gateway_id": "5"}
+        session = FakeSession([({"code": 404, "error": "No Order Found"},)])
+        with patch.object(digidokaan, "configuration", return_value=config), patch.object(
+            digidokaan, "_access_token", AsyncMock(return_value="token")
+        ):
+            rows = await digidokaan.fetch_pending_shipper_advice(session)
+
+        self.assertEqual(rows, [])
 
     async def test_submits_shipper_advice_and_invalidates_queue_cache(self):
         config = {"base_url": "https://digidokaan.example", "phone": "923000000000", "password": "secret", "gateway_id": "5"}

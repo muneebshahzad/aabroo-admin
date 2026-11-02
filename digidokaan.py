@@ -93,9 +93,13 @@ class _PublicTrackingParser(HTMLParser):
 
 
 def configuration():
+    raw_phone = (os.getenv("DIGIDOKAAN_PHONE") or "").strip()
+    phone_digits = re.sub(r"\D", "", raw_phone)
+    if phone_digits.startswith("0"):
+        phone_digits = "92" + phone_digits[1:]
     values = {
         "base_url": (os.getenv("DIGIDOKAAN_API_URL") or "https://digidokaan.pk").rstrip("/"),
-        "phone": (os.getenv("DIGIDOKAAN_PHONE") or "").strip(),
+        "phone": phone_digits,
         "password": os.getenv("DIGIDOKAAN_PASSWORD") or "",
         "gateway_id": str(os.getenv("DIGIDOKAAN_GATEWAY_ID") or "5").strip(),
     }
@@ -481,8 +485,13 @@ async def fetch_pending_shipper_advice(session):
     ) as response:
         body = await response.json(content_type=None)
     rows = body.get("data") if isinstance(body, dict) else None
+    if response.status == 200 and isinstance(body, dict) and str(body.get("code")) == "404":
+        _shipper_advice_cache = []
+        _shipper_advice_cache_expires_at = time.monotonic() + _ACTIVE_CACHE_SECONDS
+        return []
     if response.status != 200 or not isinstance(rows, list):
-        raise RuntimeError("DigiDokaan shipper advice is temporarily unavailable")
+        message = (body.get("error") or body.get("message")) if isinstance(body, dict) else ""
+        raise RuntimeError(message or "DigiDokaan shipper advice is temporarily unavailable")
     _shipper_advice_cache = rows
     _shipper_advice_cache_expires_at = time.monotonic() + _OPERATIONS_REFRESH_SECONDS
     return rows

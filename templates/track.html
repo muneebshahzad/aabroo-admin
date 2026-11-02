@@ -58,6 +58,8 @@
   .advice-order-copy { min-width:0; }
   .advice-product-name { color:#303746; font-size:11px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:190px; }
   .advice-total { color:#8b5a00; font:800 11px 'DM Mono',monospace; margin-top:4px; }
+  .advice-empty { padding:14px; color:#7c8495; font-size:12px; background:#fff; }
+  .advice-empty.error { color:#b33b32; }
   @media(max-width:900px){.advice-row{grid-template-columns:1fr 1fr}.advice-form{grid-column:1/-1}.advice-route{display:block}}
   @media(max-width:600px){.advice-section{margin:10px}.advice-row{grid-template-columns:1fr;gap:9px}.advice-form{grid-template-columns:1fr}.advice-route{display:block}.advice-head{align-items:flex-start;flex-direction:column}.advice-review{text-align:left}.advice-product-name{max-width:calc(100vw - 130px)}.advice-submit{min-height:42px}}
 
@@ -269,11 +271,10 @@
       </button>
     </div>
 
-    {% if shipper_advice_orders %}
     <section class="advice-section" aria-label="Shipper advice required">
       <div class="advice-head">
         <div class="advice-title"><span>⚠️</span> Shipper Advice Required <span class="advice-count">{{ shipper_advice_orders|length }}</span></div>
-        <div class="advice-note">These shipments are waiting for your instruction. Refreshed every 6 hours.</div>
+        <div class="advice-note">Live DigiDokaan queue · empty results refresh every 5 minutes.</div>
       </div>
       <div>
         {% for advice in shipper_advice_orders %}
@@ -305,9 +306,13 @@
           </div>
         </div>
         {% endfor %}
+        {% if not shipper_advice_orders %}
+        <div class="advice-empty{% if shipper_advice_error %} error{% endif %}">
+          {% if shipper_advice_error %}Could not load DigiDokaan shipper advice: {{ shipper_advice_error }}{% else %}No shipments currently require shipper advice.{% endif %}
+        </div>
+        {% endif %}
       </div>
     </section>
-    {% endif %}
 
     {% if employee_approvals %}
     <div style="padding:10px 14px 0;display:flex;align-items:center;gap:8px;margin-bottom:8px;">
@@ -1135,7 +1140,10 @@ async function postShipperAdvice(button) {
     if (count) count.textContent = remaining;
     if (!remaining) {
       const section = document.querySelector('.advice-section');
-      if (section) section.remove();
+      if (section) {
+        const body = section.querySelector('.advice-head + div');
+        if (body) body.innerHTML = '<div class="advice-empty">No shipments currently require shipper advice.</div>';
+      }
     }
   } catch (error) {
     showToast(error.message || 'Could not post shipper advice.');

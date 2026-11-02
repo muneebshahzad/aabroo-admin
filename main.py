@@ -2735,14 +2735,17 @@ def tracking():
         shipper_advice_orders = enrich_shipper_advice_orders(
             visible_shipper_advice_rows(asyncio.run(load_shipper_advice())), order_details
         )
+        shipper_advice_error = ""
     except Exception as advice_error:
         print(f"Could not load DigiDokaan shipper advice: {advice_error}")
         shipper_advice_orders = []
+        shipper_advice_error = str(advice_error)
     return render_template(
         "track.html",
         order_details=order_details,
         darazOrders=[],
         shipper_advice_orders=shipper_advice_orders,
+        shipper_advice_error=shipper_advice_error,
         employee_approvals=build_employee_approval_items(),
     )
 
