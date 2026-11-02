@@ -106,14 +106,21 @@ def _clean_status(value):
 
 
 def _event_timestamp(event):
-    raw = str((event or {}).get("date_time") or "").strip()
+    raw = str((event or {}).get("date_time") or (event or {}).get("TransactionDate") or "").strip()
     if not raw:
         return None
     try:
         return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
     except ValueError:
         pass
-    for pattern in ("%d/%m/%Y %I:%M %p", "%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M:%S"):
+    for pattern in (
+        "%d/%m/%Y %I:%M %p",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y %H:%M:%S",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y %I:%M %p",
+        "%Y-%m-%d %H:%M:%S",
+    ):
         try:
             return datetime.strptime(raw, pattern).timestamp()
         except ValueError:
@@ -127,6 +134,29 @@ def _latest_tracking_event(events):
         return None
     dated = [(timestamp, event) for event in valid if (timestamp := _event_timestamp(event)) is not None]
     return max(dated, key=lambda item: item[0])[1] if dated else valid[0]
+
+
+def _latest_history_event(history):
+    valid = [event for event in (history or []) if isinstance(event, dict) and str(event.get("ProcessDescForPortal") or "").strip()]
+    if not valid:
+        return None
+    dated = [(timestamp, event) for event in valid if (timestamp := _event_timestamp(event)) is not None]
+    return max(dated, key=lambda item: item[0])[1] if dated else valid[-1]
+
+
+def _prefer_fresher_history(account_history, public_history):
+    """Keep merchant data unless the public courier tracker has a newer scan."""
+    if not account_history:
+        return public_history or []
+    if not public_history:
+        return account_history
+    account_latest = _latest_history_event(account_history)
+    public_latest = _latest_history_event(public_history)
+    account_time = _event_timestamp(account_latest)
+    public_time = _event_timestamp(public_latest)
+    if public_time is not None and (account_time is None or public_time > account_time):
+        return public_history
+    return account_history
 
 
 def _display_status(detail_body, fallback=None):
@@ -255,12 +285,28 @@ def _cached_status(tracking_number):
 
 
 async def _fetch_status(session, tracking_number, config):
-    order, detail = await _order_detail(session, tracking_number, config)
+    account_result, public_result = await asyncio.gather(
+        _order_detail(session, tracking_number, config),
+        _public_tracking_history(session, tracking_number),
+        return_exceptions=True,
+    )
+    order, detail = account_result if not isinstance(account_result, Exception) else (None, None)
+    public_history = public_result if isinstance(public_result, list) else []
     if not order:
-        history = await _public_tracking_history(session, tracking_number)
-        return history[-1].get("ProcessDescForPortal") if history else None
+        latest = _latest_history_event(public_history)
+        return latest.get("ProcessDescForPortal") if latest else None
     fallback = _clean_status(order.get("courier_status") or order.get("status")) or None
-    return _display_status(detail, fallback) if detail else fallback
+    account_status = _display_status(detail, fallback) if detail else fallback
+    data = detail.get("data") if isinstance(detail, dict) else None
+    tracking = data.get("tracking_response") if isinstance(data, dict) else None
+    events = tracking.get("data") if isinstance(tracking, dict) else None
+    account_latest = _latest_tracking_event(events)
+    public_latest = _latest_history_event(public_history)
+    account_time = _event_timestamp(account_latest)
+    public_time = _event_timestamp(public_latest)
+    if public_latest and public_time is not None and (account_time is None or public_time > account_time):
+        return public_latest.get("ProcessDescForPortal") or account_status
+    return account_status
 
 
 async def fetch_tracking_status(session, tracking_number):
@@ -302,13 +348,22 @@ async def fetch_tracking_history(session, tracking_number):
     if not config:
         return await _public_tracking_history(session, normalized)
     try:
-        order, detail_body = await _order_detail(session, normalized, config)
+        account_result, public_result = await asyncio.gather(
+            _order_detail(session, normalized, config),
+            _public_tracking_history(session, normalized),
+            return_exceptions=True,
+        )
+        public_history = public_result if isinstance(public_result, list) else []
+        if isinstance(account_result, Exception):
+            print(f"DigiDokaan account tracking unavailable for {normalized}: {account_result}")
+            return public_history
+        order, detail_body = account_result
         data = detail_body.get("data") if isinstance(detail_body, dict) else None
         detail = data.get("order_detail") if isinstance(data, dict) else None
         tracking = data.get("tracking_response") if isinstance(data, dict) else None
         events = tracking.get("data") if isinstance(tracking, dict) else None
         if not isinstance(detail, dict) or not isinstance(events, list):
-            return await _public_tracking_history(session, normalized)
+            return public_history
         history = []
         for event in reversed(events):
             if not isinstance(event, dict) or not str(event.get("status") or "").strip():
@@ -323,7 +378,7 @@ async def fetch_tracking_history(session, tracking_number):
                 "ContactNo": detail.get("customer_phone") or detail.get("phone") or "",
                 "ConsigneeCity": detail.get("customer_city") or "",
             })
-        return history
+        return _prefer_fresher_history(history, public_history)
     except Exception as error:
         print(f"DigiDokaan tracking history unavailable for {normalized}: {error}")
         return await _public_tracking_history(session, normalized)

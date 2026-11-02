@@ -93,6 +93,39 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         self.assertEqual(history[-1]["ConsigneeName"], "Umair Nasir")
         self.assertEqual(history[-1]["ConsigneeCity"], "Islamabad")
 
+    def test_public_tracking_wins_only_when_it_has_a_newer_courier_scan(self):
+        account_history = [
+            {"TransactionDate": "25/10/2026 10:00:00", "ProcessDescForPortal": "In Transit"},
+        ]
+        newer_public_history = [
+            {"TransactionDate": "26-10-2026 12:13:00", "ProcessDescForPortal": "Delivered"},
+        ]
+        older_public_history = [
+            {"TransactionDate": "24-10-2026 07:15:00", "ProcessDescForPortal": "Booked"},
+        ]
+
+        self.assertIs(
+            digidokaan._prefer_fresher_history(account_history, newer_public_history),
+            newer_public_history,
+        )
+        self.assertIs(
+            digidokaan._prefer_fresher_history(account_history, older_public_history),
+            account_history,
+        )
+
+    async def test_status_uses_newer_public_scan_from_another_merchant_account(self):
+        config = {"base_url": "https://digidokaan.example", "phone": "923000000000", "password": "secret", "gateway_id": "5"}
+        account = ({"courier_status": "In Transit"}, {"data": {"tracking_response": {"data": [
+            {"status": "Shipment - In Transit", "date_time": "25/10/2026 10:00:00"},
+        ]}}})
+        public = [{"TransactionDate": "26-10-2026 12:13:00", "ProcessDescForPortal": "Delivered"}]
+        with patch.object(digidokaan, "_order_detail", AsyncMock(return_value=account)), patch.object(
+            digidokaan, "_public_tracking_history", AsyncMock(return_value=public)
+        ):
+            status = await digidokaan._fetch_status(object(), "22317469504278", config)
+
+        self.assertEqual(status, "Delivered")
+
 
 def test_aabroo_routes_digidokaan_tracking(monkeypatch):
     monkeypatch.setenv("INITIALIZE_APP", "false")
