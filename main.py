@@ -33,7 +33,9 @@ from db import (
     get_accounts_page_data,
     get_app_setting,
     init_db,
+    load_shipper_advice_action_keys,
     load_order_statuses,
+    save_shipper_advice_action,
     set_app_setting,
     upsert_order_status,
 )
@@ -51,9 +53,12 @@ from shopify_protected_data import (
     verify_oauth_hmac,
 )
 from digidokaan import (
+    fetch_pending_shipper_advice,
     fetch_tracking_history as fetch_digidokaan_tracking_history,
     fetch_tracking_status as fetch_digidokaan_tracking_status,
+    submit_shipper_advice,
 )
+from shipper_advice_state import advice_request_key, remove_acknowledged_advice
 
 
 app = Flask(__name__)
@@ -74,6 +79,7 @@ order_details = []
 product_image_cache = {}
 tracking_summary_cache = {}
 tracking_refresh_lock = threading.Lock()
+shipper_advice_action_cache = set()
 postex_payment_status_cache = {}
 postex_payment_status_cache_loaded = False
 RATE_LIMIT = 2
@@ -217,6 +223,12 @@ def parse_money(value, default=0.0):
         return round(float(value or default), 2)
     except (TypeError, ValueError):
         return round(float(default), 2)
+
+
+def visible_shipper_advice_rows(rows):
+    acknowledged = set(shipper_advice_action_cache)
+    acknowledged.update(load_shipper_advice_action_keys())
+    return remove_acknowledged_advice(rows, acknowledged)
 
 
 def parse_date_for_sort(value):
@@ -2638,16 +2650,99 @@ def mark_paid_archive():
     ), 207 if failed else 200
 
 
+def _advice_digits(value):
+    return "".join(character for character in str(value or "") if character.isdigit())
+
+
+def enrich_shipper_advice_orders(advice_rows, shopify_orders):
+    """Attach the matching Shopify order summary to each DigiDokaan request."""
+    by_reference, by_tracking = {}, {}
+    for order in shopify_orders or []:
+        reference = _advice_digits(order.get("order_num") or order.get("order_id"))
+        if reference:
+            by_reference[reference] = order
+        for item in order.get("line_items") or []:
+            tracking_number = _advice_digits(item.get("tracking_number"))
+            if tracking_number and tracking_number != "0":
+                by_tracking[tracking_number] = order
+    enriched = []
+    for raw_advice in advice_rows or []:
+        advice = dict(raw_advice or {})
+        reference = _advice_digits(advice.get("external_reference_no") or advice.get("order_id"))
+        tracking_number = _advice_digits(advice.get("tracking_no"))
+        order = by_reference.get(reference) or by_tracking.get(tracking_number)
+        if order:
+            matching_items = [item for item in (order.get("line_items") or []) if not tracking_number or _advice_digits(item.get("tracking_number")) == tracking_number] or list(order.get("line_items") or [])
+            total = parse_money(order.get("total_price"), 0)
+            advice["shopify_order"] = {
+                "order_num": order.get("order_num") or order.get("order_id") or reference,
+                "total": total,
+                "display_total": f"PKR {total:,.0f}",
+                "items": [{
+                    "title": item.get("product_title") or item.get("item_title") or "Product",
+                    "image": item.get("image_src") or item.get("item_image") or "",
+                    "quantity": int(float(item.get("quantity") or 1)),
+                } for item in matching_items],
+            }
+        else:
+            advice["shopify_order"] = None
+        enriched.append(advice)
+    return enriched
+
+
+@app.post("/api/shipper-advice")
+def post_shipper_advice():
+    data = request.get_json(silent=True) or {}
+    tracking_number = _advice_digits(data.get("tracking_number"))
+    advice_status = str(data.get("advice_status") or "").strip().casefold()
+    remarks = str(data.get("remarks") or "").strip()
+    if not tracking_number or advice_status not in {"reattempt", "return"} or not remarks:
+        return jsonify({"success": False, "error": "Tracking number, action and remarks are required."}), 400
+
+    async def submit():
+        async with aiohttp.ClientSession() as client:
+            pending = visible_shipper_advice_rows(await fetch_pending_shipper_advice(client))
+            shipment = next((row for row in pending if _advice_digits(row.get("tracking_no")) == tracking_number), None)
+            if not shipment:
+                raise ValueError("This shipment is no longer awaiting shipper advice.")
+            result = await submit_shipper_advice(client, tracking_number, shipment.get("gateway_id"), advice_status, remarks)
+            return result, shipment
+
+    try:
+        result, shipment = asyncio.run(submit())
+        request_key = advice_request_key(shipment)
+        shipper_advice_action_cache.add(request_key)
+        if not save_shipper_advice_action(request_key, tracking_number, advice_status, remarks):
+            print(f"Shipper advice {tracking_number} was accepted, but its acknowledgement could not be persisted")
+        return jsonify({"success": True, "message": result.get("msg") or result.get("message") or "Shipper advice submitted successfully."})
+    except ValueError as error:
+        return jsonify({"success": False, "error": str(error)}), 409
+    except Exception as error:
+        print(f"Could not submit DigiDokaan shipper advice: {error}")
+        return jsonify({"success": False, "error": str(error)}), 502
+
+
 @app.route("/")
 def tracking():
     refill_missing_customer_details(order_details)
     repair_order_customer_cache(order_details)
     refresh_active_tracking_for_dashboard()
     repair_order_customer_cache(order_details)
+    try:
+        async def load_shipper_advice():
+            async with aiohttp.ClientSession() as client:
+                return await fetch_pending_shipper_advice(client)
+        shipper_advice_orders = enrich_shipper_advice_orders(
+            visible_shipper_advice_rows(asyncio.run(load_shipper_advice())), order_details
+        )
+    except Exception as advice_error:
+        print(f"Could not load DigiDokaan shipper advice: {advice_error}")
+        shipper_advice_orders = []
     return render_template(
         "track.html",
         order_details=order_details,
         darazOrders=[],
+        shipper_advice_orders=shipper_advice_orders,
         employee_approvals=build_employee_approval_items(),
     )
 

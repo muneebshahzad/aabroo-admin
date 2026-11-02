@@ -31,6 +31,36 @@
   .refresh-btn { margin-left: auto; flex-shrink: 0; display: flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 7px; border: 1px solid #e3e6f0; background: #fff; font-size: 11px; font-weight: 600; font-family: 'DM Sans', sans-serif; color: #4e73df; cursor: pointer; white-space: nowrap; }
   .refresh-btn:hover { background: #f0f4ff; }
 
+  /* ── DigiDokaan shipper advice ── */
+  .advice-section { margin:12px 14px 14px; max-width:960px; border:1px solid #f2c76e; background:#fffaf0; border-radius:12px; overflow:hidden; box-shadow:0 3px 12px rgba(145,95,0,.08); }
+  .advice-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; background:#fff3d6; border-bottom:1px solid #f3d797; }
+  .advice-title { display:flex; align-items:center; gap:8px; color:#744d00; font-weight:800; font-size:13px; }
+  .advice-count { background:#d98b00; color:#fff; border-radius:999px; padding:3px 8px; font-size:11px; }
+  .advice-note { color:#8a6a2f; font-size:11px; }
+  .advice-row { display:grid; grid-template-columns:minmax(190px,1.25fr) minmax(150px,.8fr) minmax(140px,.75fr) minmax(260px,1.35fr); align-items:center; gap:14px; padding:12px 14px; border-bottom:1px solid #f4e5c5; }
+  .advice-row:last-child { border-bottom:0; }
+  .advice-customer { color:#303746; font-weight:800; font-size:13px; }
+  .advice-meta { color:#7c8495; font-size:11px; margin-top:3px; }
+  .advice-reason { color:#b33b32; font-size:12px; font-weight:800; }
+  .advice-status { color:#856000; font-size:11px; margin-top:3px; }
+  .advice-track { color:#405bd2; font-weight:800; font-size:12px; text-decoration:none; }
+  .advice-form { display:grid; grid-template-columns:105px 1fr auto; gap:6px; align-items:center; }
+  .advice-form select,.advice-form input { min-width:0; border:1px solid #dec78f; border-radius:7px; background:#fff; color:#4b4f5b; padding:7px 8px; font:600 11px 'DM Sans',sans-serif; }
+  .advice-form input::placeholder { color:#a1a6b2; font-weight:400; }
+  .advice-submit { border:0; background:#d98b00; color:#fff; border-radius:7px; padding:8px 11px; font:800 11px 'DM Sans',sans-serif; cursor:pointer; white-space:nowrap; }
+  .advice-submit:disabled { opacity:.55; cursor:wait; }
+  .advice-review { display:block; text-align:right; margin-top:5px; color:#7b6a45; font-size:10px; text-decoration:none; }
+  .advice-order { display:flex; gap:10px; align-items:center; min-width:0; }
+  .advice-products { display:flex; flex:0 0 auto; }
+  .advice-product-img { width:48px; height:48px; border:1px solid #eadbbd; border-radius:9px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#fff; color:#9a8154; font-size:18px; }
+  .advice-product-img + .advice-product-img { margin-left:-10px; }
+  .advice-product-img img { width:100%; height:100%; object-fit:cover; }
+  .advice-order-copy { min-width:0; }
+  .advice-product-name { color:#303746; font-size:11px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:190px; }
+  .advice-total { color:#8b5a00; font:800 11px 'DM Mono',monospace; margin-top:4px; }
+  @media(max-width:900px){.advice-row{grid-template-columns:1fr 1fr}.advice-form{grid-column:1/-1}.advice-route{display:block}}
+  @media(max-width:600px){.advice-section{margin:10px}.advice-row{grid-template-columns:1fr;gap:9px}.advice-form{grid-template-columns:1fr}.advice-route{display:block}.advice-head{align-items:flex-start;flex-direction:column}.advice-review{text-align:left}.advice-product-name{max-width:calc(100vw - 130px)}.advice-submit{min-height:42px}}
+
   /* ── Employee approvals ── */
   .approval-card { background: #fff7ec; border: 1px solid #f2d1a6; border-radius: 12px; overflow: hidden; }
   .approval-list { display: flex; flex-direction: column; gap: 8px; }
@@ -238,6 +268,46 @@
         <span id="refreshIcon">🔄</span> Refresh All Tracking
       </button>
     </div>
+
+    {% if shipper_advice_orders %}
+    <section class="advice-section" aria-label="Shipper advice required">
+      <div class="advice-head">
+        <div class="advice-title"><span>⚠️</span> Shipper Advice Required <span class="advice-count">{{ shipper_advice_orders|length }}</span></div>
+        <div class="advice-note">These shipments are waiting for your instruction. Refreshed every 6 hours.</div>
+      </div>
+      <div>
+        {% for advice in shipper_advice_orders %}
+        <div class="advice-row">
+          <div class="advice-order">
+            {% if advice.shopify_order and advice.shopify_order['items'] %}
+            <div class="advice-products">
+              {% for item in advice.shopify_order['items'][:2] %}<span class="advice-product-img">{% if item.image %}<img src="{{ item.image }}" alt="" loading="lazy" onerror="this.parentElement.textContent='📦'">{% else %}📦{% endif %}</span>{% endfor %}
+            </div>
+            {% endif %}
+            <div class="advice-order-copy">
+              <div class="advice-customer">{{ advice.buyer_name or 'Unknown customer' }}</div>
+              <div class="advice-meta">Order #{{ advice.external_reference_no or advice.order_id }} · {{ advice.buyer_number or '' }}</div>
+              {% if advice.shopify_order and advice.shopify_order['items'] %}
+              <div class="advice-product-name">{{ advice.shopify_order['items'][0].title }} ×{{ advice.shopify_order['items'][0].quantity }}{% if advice.shopify_order['items']|length > 1 %} +{{ advice.shopify_order['items']|length - 1 }} more{% endif %}</div>
+              <div class="advice-total">{{ advice.shopify_order.display_total }}</div>
+              {% endif %}
+            </div>
+          </div>
+          <div><a class="advice-track" href="/track/{{ advice.tracking_no }}">{{ advice.tracking_no }}</a><div class="advice-meta">Requested {{ advice.status_date or advice.advice_date or '' }}</div></div>
+          <div class="advice-route"><div class="advice-reason">{{ advice.courier_status_reason or 'Advice required' }}</div><div class="advice-status">{{ advice.origin or '' }}{% if advice.origin and advice.destination %} → {% endif %}{{ advice.destination or '' }}</div></div>
+          <div>
+            <div class="advice-form" data-tracking="{{ advice.tracking_no }}">
+              <select aria-label="Advice action"><option value="reattempt">Reattempt</option><option value="return">Return</option></select>
+              <input type="text" maxlength="250" placeholder="Add remarks" aria-label="Shipper advice remarks">
+              <button class="advice-submit" type="button" onclick="postShipperAdvice(this)">Post advice</button>
+            </div>
+            <a class="advice-review" href="/track/{{ advice.tracking_no }}">Review tracking history</a>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
 
     {% if employee_approvals %}
     <div style="padding:10px 14px 0;display:flex;align-items:center;gap:8px;margin-bottom:8px;">
@@ -1031,6 +1101,47 @@ async function applyReturnedToAll() {
   showToast(`Applied "Returned" to ${toReturn.length} orders`);
   updateBottomBar();
   btn.disabled = false;
+}
+
+// ── DigiDokaan shipper advice ──
+async function postShipperAdvice(button) {
+  const form = button.closest('.advice-form');
+  const trackingNumber = form.dataset.tracking;
+  const action = form.querySelector('select').value;
+  const remarksInput = form.querySelector('input');
+  const remarks = remarksInput.value.trim();
+  if (!remarks) {
+    remarksInput.focus();
+    showToast('Add remarks before posting shipper advice.');
+    return;
+  }
+  const actionLabel = action === 'return' ? 'Return' : 'Reattempt';
+  if (!window.confirm(`${actionLabel} shipment ${trackingNumber}?\n\nRemarks: ${remarks}\n\nThis instruction will be sent to DigiDokaan and the courier.`)) return;
+  button.disabled = true;
+  button.textContent = 'Posting…';
+  try {
+    const response = await fetch('/api/shipper-advice', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tracking_number: trackingNumber, advice_status: action, remarks})
+    });
+    const result = await response.json();
+    if (!response.ok || !result.success) throw new Error(result.error || 'DigiDokaan rejected the advice.');
+    showToast(result.message || 'Shipper advice submitted successfully.');
+    const row = form.closest('.advice-row');
+    if (row) row.remove();
+    const remaining = document.querySelectorAll('.advice-row').length;
+    const count = document.querySelector('.advice-count');
+    if (count) count.textContent = remaining;
+    if (!remaining) {
+      const section = document.querySelector('.advice-section');
+      if (section) section.remove();
+    }
+  } catch (error) {
+    showToast(error.message || 'Could not post shipper advice.');
+    button.disabled = false;
+    button.textContent = 'Post advice';
+  }
 }
 
 // ── Refresh Tracking ──

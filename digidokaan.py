@@ -14,9 +14,12 @@ _token = ""
 _token_created_at = 0.0
 _status_cache = {}
 _inflight = {}
+_shipper_advice_cache = None
+_shipper_advice_cache_expires_at = 0.0
 _TOKEN_TTL_SECONDS = 6 * 60 * 60
 _ACTIVE_CACHE_SECONDS = 5 * 60
 _TERMINAL_CACHE_SECONDS = 24 * 60 * 60
+_OPERATIONS_REFRESH_SECONDS = 6 * 60 * 60
 _TERMINAL_STATUSES = {"delivered", "returned", "return delivered", "cancelled"}
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
@@ -459,3 +462,56 @@ async def fetch_tracking_history(session, tracking_number):
     except Exception as error:
         print(f"DigiDokaan tracking history unavailable for {normalized}: {error}")
         return await _combined_public_tracking_history(session, normalized)
+
+
+async def fetch_pending_shipper_advice(session):
+    """Return the merchant's pending DigiDokaan shipper-advice queue."""
+    global _shipper_advice_cache, _shipper_advice_cache_expires_at
+    if _shipper_advice_cache is not None and _shipper_advice_cache_expires_at > time.monotonic():
+        return _shipper_advice_cache
+    config = configuration()
+    if not config:
+        return []
+    token = await _access_token(session, config)
+    async with session.post(
+        config["base_url"] + "/api/courier/get_shipper_advice_order",
+        json={"phone": config["phone"]},
+        headers={"Accept": "application/json", "Authorization": "Bearer " + token},
+        timeout=ClientTimeout(total=20), ssl=_SSL_CONTEXT,
+    ) as response:
+        body = await response.json(content_type=None)
+    rows = body.get("data") if isinstance(body, dict) else None
+    if response.status != 200 or not isinstance(rows, list):
+        raise RuntimeError("DigiDokaan shipper advice is temporarily unavailable")
+    _shipper_advice_cache = rows
+    _shipper_advice_cache_expires_at = time.monotonic() + _OPERATIONS_REFRESH_SECONDS
+    return rows
+
+
+async def submit_shipper_advice(session, tracking_number, gateway_id, advice_status, remarks):
+    """Submit a reattempt or return instruction for one pending shipment."""
+    global _shipper_advice_cache, _shipper_advice_cache_expires_at
+    normalized_tracking = "".join(ch for ch in str(tracking_number or "") if ch.isdigit())
+    normalized_status = str(advice_status or "").strip().casefold()
+    if not normalized_tracking or normalized_status not in {"reattempt", "return"}:
+        raise ValueError("Choose Reattempt or Return")
+    clean_remarks = str(remarks or "").strip()
+    if not clean_remarks:
+        raise ValueError("Remarks are required")
+    config = configuration()
+    if not config:
+        raise RuntimeError("DigiDokaan is not configured")
+    token = await _access_token(session, config)
+    async with session.post(
+        config["base_url"] + "/api/courier/shipper_advice_action",
+        json={"phone": config["phone"], "gateway_id": str(gateway_id or config["gateway_id"]), "tracking_no": normalized_tracking, "shipper_advice_status": normalized_status, "shipper_advice_remarks": clean_remarks},
+        headers={"Accept": "application/json", "Authorization": "Bearer " + token},
+        timeout=ClientTimeout(total=25), ssl=_SSL_CONTEXT,
+    ) as response:
+        body = await response.json(content_type=None)
+    if response.status != 200 or not isinstance(body, dict) or body.get("code") != 200:
+        message = (body.get("error") or body.get("message")) if isinstance(body, dict) else ""
+        raise RuntimeError(message or "DigiDokaan did not accept the shipper advice")
+    _shipper_advice_cache = None
+    _shipper_advice_cache_expires_at = 0.0
+    return body

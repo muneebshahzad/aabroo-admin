@@ -35,6 +35,8 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
     def setUp(self):
         digidokaan._status_cache.clear()
         digidokaan._inflight.clear()
+        digidokaan._shipper_advice_cache = None
+        digidokaan._shipper_advice_cache_expires_at = 0.0
 
     def test_requires_credentials(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -137,6 +139,39 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(status, "Delivered")
 
+    async def test_fetches_and_caches_pending_shipper_advice(self):
+        config = {"base_url": "https://digidokaan.example", "phone": "923000000000", "password": "secret", "gateway_id": "5"}
+        rows = [{"tracking_no": "22320269889521", "gateway_id": 5}]
+        session = FakeSession([({"data": rows},)])
+        with patch.object(digidokaan, "configuration", return_value=config), patch.object(
+            digidokaan, "_access_token", AsyncMock(return_value="token")
+        ):
+            first = await digidokaan.fetch_pending_shipper_advice(session)
+            second = await digidokaan.fetch_pending_shipper_advice(session)
+
+        self.assertEqual(first, rows)
+        self.assertIs(second, first)
+        self.assertEqual(len(session.calls), 1)
+        self.assertTrue(session.calls[0][0][0].endswith("/api/courier/get_shipper_advice_order"))
+
+    async def test_submits_shipper_advice_and_invalidates_queue_cache(self):
+        config = {"base_url": "https://digidokaan.example", "phone": "923000000000", "password": "secret", "gateway_id": "5"}
+        session = FakeSession([({"code": 200, "message": "Advice posted"},)])
+        digidokaan._shipper_advice_cache = [{"tracking_no": "22320269889521"}]
+        with patch.object(digidokaan, "configuration", return_value=config), patch.object(
+            digidokaan, "_access_token", AsyncMock(return_value="token")
+        ):
+            result = await digidokaan.submit_shipper_advice(
+                session, "223 20269889521", "8", "reattempt", "Please try tomorrow"
+            )
+
+        payload = session.calls[0][1]["json"]
+        self.assertEqual(result["code"], 200)
+        self.assertEqual(payload["tracking_no"], "22320269889521")
+        self.assertEqual(payload["gateway_id"], "8")
+        self.assertEqual(payload["shipper_advice_status"], "reattempt")
+        self.assertIsNone(digidokaan._shipper_advice_cache)
+
 
 def test_aabroo_routes_digidokaan_tracking(monkeypatch):
     monkeypatch.setenv("INITIALIZE_APP", "false")
@@ -147,3 +182,25 @@ def test_aabroo_routes_digidokaan_tracking(monkeypatch):
     assert main.courier_label_for_tracking("", "22322367960798") == "DigiDokaan"
     assert not main.is_digidokaan_tracking("LE123456")
     assert main.summarize_tracking_result("22317469504278", [])["status"] == "Tracking unavailable"
+
+
+def test_shipper_advice_is_enriched_with_matching_shopify_order(monkeypatch):
+    monkeypatch.setenv("INITIALIZE_APP", "false")
+    import main
+
+    result = main.enrich_shipper_advice_orders(
+        [{"tracking_no": "22320269889521", "external_reference_no": "1020"}],
+        [{
+            "order_num": "1020",
+            "total_price": "4646.00",
+            "line_items": [{
+                "tracking_number": "22320269889521",
+                "product_title": "Cozy Ultra Soft Stole",
+                "quantity": 3,
+                "image_src": "https://example.test/stole.jpg",
+            }],
+        }],
+    )
+
+    assert result[0]["shopify_order"]["display_total"] == "PKR 4,646"
+    assert result[0]["shopify_order"]["items"][0]["title"] == "Cozy Ultra Soft Stole"

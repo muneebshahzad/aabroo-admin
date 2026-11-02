@@ -30,6 +30,21 @@ def _ensure_app_settings_table(cur):
     )
 
 
+def _ensure_shipper_advice_actions_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shipper_advice_actions (
+            request_key TEXT PRIMARY KEY,
+            tracking_number TEXT NOT NULL,
+            advice_status TEXT NOT NULL,
+            remarks TEXT NOT NULL DEFAULT '',
+            submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS shipper_advice_actions_tracking_idx ON shipper_advice_actions(tracking_number)")
+
+
 ACCOUNT_DEFAULTS = ("Bank", "Al Karamat")
 
 ACCOUNT_CATEGORY_DEFAULTS = {
@@ -207,6 +222,7 @@ def init_db():
                     """
                 )
                 _ensure_app_settings_table(cur)
+                _ensure_shipper_advice_actions_table(cur)
             conn.commit()
         _set_last_db_error("")
         print("DB initialized.")
@@ -299,6 +315,47 @@ def set_app_setting(key: str, value: str):
     except Exception as e:
         _set_last_db_error(str(e))
         print(f"DB set_app_setting error: {e}")
+        return False
+
+
+def load_shipper_advice_action_keys() -> set[str]:
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                _ensure_shipper_advice_actions_table(cur)
+                cur.execute("SELECT request_key FROM shipper_advice_actions WHERE submitted_at >= NOW() - INTERVAL '180 days'")
+                keys = {row[0] for row in cur.fetchall()}
+            conn.commit()
+        _set_last_db_error("")
+        return keys
+    except Exception as e:
+        _set_last_db_error(str(e))
+        print(f"DB load shipper advice actions error: {e}")
+        return set()
+
+
+def save_shipper_advice_action(request_key: str, tracking_number: str, advice_status: str, remarks: str) -> bool:
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                _ensure_shipper_advice_actions_table(cur)
+                cur.execute(
+                    """
+                    INSERT INTO shipper_advice_actions (request_key, tracking_number, advice_status, remarks)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (request_key) DO UPDATE SET
+                        advice_status = EXCLUDED.advice_status,
+                        remarks = EXCLUDED.remarks,
+                        submitted_at = NOW()
+                    """,
+                    (request_key, tracking_number, advice_status, remarks),
+                )
+            conn.commit()
+        _set_last_db_error("")
+        return True
+    except Exception as e:
+        _set_last_db_error(str(e))
+        print(f"DB save shipper advice action error: {e}")
         return False
 
 
