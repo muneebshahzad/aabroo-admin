@@ -1133,24 +1133,38 @@ def repair_order_customer_cache(orders):
 
 
 def ensure_required_shopify_webhooks():
-    base_url = shopify_rest_base_url()
-    headers = shopify_rest_headers()
     app_base_url = (os.getenv("SHOPIFY_APP_BASE_URL") or "").rstrip("/")
     if not app_base_url:
         raise RuntimeError("SHOPIFY_APP_BASE_URL is not configured.")
 
     desired = {
-        "orders/create": f"{app_base_url}/shopify/webhook/order_created",
-        "orders/updated": f"{app_base_url}/shopify/webhook/order_updated",
+        "ORDERS_CREATE": f"{app_base_url}/shopify/webhook/order_created",
+        "ORDERS_UPDATED": f"{app_base_url}/shopify/webhook/order_updated",
+        "ORDERS_CANCELLED": f"{app_base_url}/shopify/webhook/order_cancelled",
     }
 
-    response = requests.get(f"{base_url}/webhooks.json", headers=headers, timeout=20)
+    endpoint = get_graphql_endpoint()
+    token = get_graphql_token()
+    if not endpoint or not token:
+        raise RuntimeError("Shopify Admin GraphQL credentials are not configured.")
+    headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+    list_query = """
+      query AabrooWebhookSubscriptions {
+        webhookSubscriptions(first: 100) {
+          nodes { id topic uri }
+        }
+      }
+    """
+    response = requests.post(endpoint, headers=headers, json={"query": list_query}, timeout=20)
     response.raise_for_status()
-    existing_hooks = response.json().get("webhooks", []) or []
+    response_payload = response.json()
+    if response_payload.get("errors"):
+        raise RuntimeError(f"Could not list Shopify webhooks: {response_payload['errors']}")
+    existing_hooks = (((response_payload.get("data") or {}).get("webhookSubscriptions") or {}).get("nodes") or [])
     existing_pairs = {
         (
             str((hook or {}).get("topic") or "").strip().lower(),
-            str((hook or {}).get("address") or "").strip().rstrip("/"),
+            str((hook or {}).get("uri") or "").strip().rstrip("/"),
         )
         for hook in existing_hooks
     }
@@ -1158,15 +1172,32 @@ def ensure_required_shopify_webhooks():
     for topic, address in desired.items():
         if (topic.lower(), address.rstrip("/")) in existing_pairs:
             continue
-        payload = {
-            "webhook": {
-                "topic": topic,
-                "address": address,
-                "format": "json",
+        create_mutation = """
+          mutation AabrooWebhookSubscriptionCreate(
+            $topic: WebhookSubscriptionTopic!,
+            $webhookSubscription: WebhookSubscriptionInput!
+          ) {
+            webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) {
+              webhookSubscription { id topic uri }
+              userErrors { field message }
             }
-        }
-        create_response = requests.post(f"{base_url}/webhooks.json", headers=headers, json=payload, timeout=20)
+          }
+        """
+        create_response = requests.post(
+            endpoint,
+            headers=headers,
+            json={"query": create_mutation, "variables": {"topic": topic, "webhookSubscription": {"uri": address}}},
+            timeout=20,
+        )
         create_response.raise_for_status()
+        create_payload = create_response.json()
+        if create_payload.get("errors"):
+            raise RuntimeError(f"Could not create {topic} webhook: {create_payload['errors']}")
+        result = ((create_payload.get("data") or {}).get("webhookSubscriptionCreate") or {})
+        if result.get("userErrors"):
+            raise RuntimeError(f"Could not create {topic} webhook: {result['userErrors']}")
+
+    return {"success": True, "topics": sorted(desired), "destinations": desired}
 
 
 async def fetch_tracking_data(session_obj, tracking_number):
@@ -2468,7 +2499,7 @@ def create_shopify_employee_order(payload):
 def verify_shopify_webhook(req):
     shopify_hmac = req.headers.get("X-Shopify-Hmac-Sha256")
     data = req.get_data()
-    secret = os.getenv("SHOPIFY_WEBHOOK_SECRET")
+    secret = os.getenv("SHOPIFY_WEBHOOK_SECRET") or os.getenv("SHOPIFY_GRAPHQL_CLIENT_SECRET")
     if not secret:
         raise ValueError("SHOPIFY_WEBHOOK_SECRET is not set.")
     digest = hmac.new(secret.encode("utf-8"), data, hashlib.sha256).digest()
@@ -2913,6 +2944,21 @@ def shopify_order_updated():
     return _handle_shopify_order_webhook()
 
 
+@app.route("/shopify/webhook/order_cancelled", methods=["POST"])
+def shopify_order_cancelled():
+    return _handle_shopify_order_webhook()
+
+
+@app.post("/shopify/webhooks/ensure")
+def shopify_webhooks_ensure():
+    if not admin_portal_is_authenticated():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+    try:
+        return jsonify(ensure_required_shopify_webhooks())
+    except Exception as error:
+        return jsonify({"success": False, "error": str(error)}), 502
+
+
 @app.route("/scan", methods=["GET", "POST"])
 def search():
     search_term = (request.args.get("term") or request.form.get("search_term") or "").split(",")[0].strip()
@@ -3175,6 +3221,10 @@ def check_restart_times():
 
 init_db()
 setup_shopify()
+try:
+    ensure_required_shopify_webhooks()
+except Exception as webhook_error:
+    print(f"Warning: could not ensure Shopify webhooks at startup: {webhook_error}")
 reload_orders()
 
 
