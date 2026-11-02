@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import aiohttp
 import requests
@@ -80,11 +80,13 @@ product_image_cache = {}
 tracking_summary_cache = {}
 tracking_refresh_lock = threading.Lock()
 shipper_advice_action_cache = set()
+abandoned_checkout_cache = {"rows": None, "expires_at": 0.0}
 postex_payment_status_cache = {}
 postex_payment_status_cache_loaded = False
 RATE_LIMIT = 2
 LAST_REQUEST_TIME = 0.0
 PRODUCT_COSTS_SETTING_KEY = "product_cost_overrides_v1"
+ABANDONED_VIEWED_SETTING_KEY = "abandoned_checkout_viewed_v1"
 POSTEX_PAYMENT_STATUS_CACHE_SETTING_KEY = "postex_payment_status_cache_v1"
 inventory_item_cost_cache = {}
 TRACKING_REFRESH_SYNC_LIMIT = int(os.getenv("TRACKING_REFRESH_SYNC_LIMIT", "24"))
@@ -245,6 +247,192 @@ def parse_date_for_sort(value):
         except ValueError:
             continue
     return datetime.min
+
+
+def _abandoned_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _abandoned_money(money_bag):
+    money_bag = _abandoned_dict(money_bag)
+    money = _abandoned_dict(money_bag.get("presentmentMoney")) or _abandoned_dict(money_bag.get("shopMoney"))
+    return parse_money(money.get("amount"), 0), money.get("currencyCode") or "PKR"
+
+
+def _abandoned_address(value):
+    address = _abandoned_dict(value)
+    name = address.get("name") or " ".join(filter(None, (address.get("firstName"), address.get("lastName"))))
+    return {
+        "name": name or "",
+        "address": " ".join(part for part in (address.get("address1"), address.get("address2")) if part),
+        "city": address.get("city") or "",
+        "country": address.get("country") or "",
+        "phone": address.get("phone") or "",
+    }
+
+
+def _abandoned_phone(value):
+    digits = "".join(character for character in str(value or "") if character.isdigit())
+    if digits.startswith("0") and len(digits) == 11:
+        return "92" + digits[1:]
+    return digits
+
+
+def _abandoned_currency(amount, currency="PKR"):
+    return f"{currency or 'PKR'} {parse_money(amount):,.0f}"
+
+
+def _abandoned_relative_time(value):
+    created = parse_date_for_sort(value)
+    if created == datetime.min:
+        return "Unknown time"
+    now = datetime.now(created.tzinfo) if created.tzinfo else datetime.now()
+    seconds = max(int((now - created).total_seconds()), 0)
+    if seconds < 3600:
+        minutes = max(seconds // 60, 1)
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    if seconds < 86400:
+        hours = seconds // 3600
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = seconds // 86400
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def load_abandoned_viewed_tokens():
+    try:
+        return set(json.loads(get_app_setting(ABANDONED_VIEWED_SETTING_KEY, "[]") or "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return set()
+
+
+def save_abandoned_viewed_tokens(tokens):
+    return set_app_setting(ABANDONED_VIEWED_SETTING_KEY, json.dumps(sorted({str(token) for token in tokens if token})))
+
+
+def fetch_shopify_abandoned_checkouts(days=7, force=False):
+    if not force and abandoned_checkout_cache["rows"] is not None and abandoned_checkout_cache["expires_at"] > time.monotonic():
+        return abandoned_checkout_cache["rows"]
+    token = get_graphql_token()
+    endpoint = get_graphql_endpoint()
+    if not token or not endpoint:
+        raise RuntimeError("Shopify Admin GraphQL is not configured")
+    created_at_min = (datetime.now() - timedelta(days=days)).replace(microsecond=0).isoformat()
+    query = """
+    query AabrooAbandonedCheckouts($first: Int!, $after: String, $query: String) {
+      abandonedCheckouts(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id name abandonedCheckoutUrl completedAt createdAt updatedAt
+          customer {
+            firstName lastName numberOfOrders
+            defaultEmailAddress { emailAddress }
+            defaultPhoneNumber { phoneNumber }
+            defaultAddress { name address1 address2 city country phone }
+          }
+          shippingAddress { name address1 address2 city country phone }
+          billingAddress { name address1 address2 city country phone }
+          subtotalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+          totalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+          lineItems(first: 50) {
+            nodes {
+              id title variantTitle quantity image { url }
+              discountedUnitPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            }
+          }
+        }
+      }
+    }
+    """
+    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": token}
+    rows, after = [], None
+    for _ in range(10):
+        response = requests.post(
+            endpoint,
+            json={"query": query, "variables": {"first": 100, "after": after, "query": f"created_at:>={created_at_min}"}},
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("errors"):
+            raise RuntimeError("; ".join(error.get("message", "Shopify GraphQL error") for error in payload["errors"]))
+        connection = _abandoned_dict(_abandoned_dict(payload.get("data")).get("abandonedCheckouts"))
+        rows.extend(connection.get("nodes") or [])
+        page_info = _abandoned_dict(connection.get("pageInfo"))
+        if not page_info.get("hasNextPage"):
+            break
+        after = page_info.get("endCursor")
+        if not after:
+            break
+    abandoned_checkout_cache.update(rows=rows, expires_at=time.monotonic() + 5 * 60)
+    return rows
+
+
+def build_abandoned_checkouts_data(days=7, force=False):
+    nodes = fetch_shopify_abandoned_checkouts(days, force=force)
+    viewed_tokens = load_abandoned_viewed_tokens()
+    today = datetime.now().date()
+    rows = []
+    for node in nodes:
+        node = _abandoned_dict(node)
+        customer = _abandoned_dict(node.get("customer"))
+        shipping = _abandoned_address(node.get("shippingAddress"))
+        billing = _abandoned_address(node.get("billingAddress"))
+        email = _abandoned_dict(customer.get("defaultEmailAddress")).get("emailAddress") or ""
+        raw_phone = shipping.get("phone") or billing.get("phone") or _abandoned_dict(customer.get("defaultPhoneNumber")).get("phoneNumber") or ""
+        phone = _abandoned_phone(raw_phone)
+        name = shipping.get("name") or billing.get("name") or " ".join(filter(None, (customer.get("firstName"), customer.get("lastName")))) or email or phone or "No customer"
+        total, currency = _abandoned_money(node.get("totalPriceSet"))
+        subtotal, _ = _abandoned_money(node.get("subtotalPriceSet"))
+        items = []
+        for line in _abandoned_dict(node.get("lineItems")).get("nodes") or []:
+            unit_price, _ = _abandoned_money(line.get("discountedUnitPriceSet"))
+            quantity = int(line.get("quantity") or 0)
+            title = line.get("title") or "Product"
+            variant = line.get("variantTitle") or ""
+            items.append({
+                "title": f"{title} - {variant}" if variant and variant != "Default Title" else title,
+                "quantity": quantity,
+                "image": _abandoned_dict(line.get("image")).get("url") or "",
+                "display_total": _abandoned_currency(unit_price * quantity, currency),
+            })
+        token_value = str(node.get("name") or node.get("id") or "")
+        created_at = node.get("createdAt") or ""
+        completed_at = node.get("completedAt") or ""
+        rows.append({
+            "token": token_value,
+            "created_at": created_at,
+            "relative_age": _abandoned_relative_time(node.get("updatedAt") or created_at),
+            "customer_name": name,
+            "customer_email": email,
+            "customer_phone": phone,
+            "customer_city": shipping.get("city") or billing.get("city") or "",
+            "customer_country": shipping.get("country") or billing.get("country") or "",
+            "customer_address": shipping.get("address") or billing.get("address") or "",
+            "customer_orders_count": int(customer.get("numberOfOrders") or 0),
+            "display_total": _abandoned_currency(total, currency),
+            "display_subtotal": _abandoned_currency(subtotal, currency),
+            "display_shipping": _abandoned_currency(max(total - subtotal, 0), currency),
+            "total_price": total,
+            "items": items,
+            "viewed": token_value in viewed_tokens,
+            "recovered": bool(completed_at),
+            "completed_at": completed_at,
+            "abandoned_checkout_url": node.get("abandonedCheckoutUrl") or "",
+            "whatsapp_url": f"https://wa.me/{phone}?{urlencode({'text': f'Hello {name}, you left items in your Aabroo cart. Would you like help completing your order?'})}" if phone else "",
+            "is_today": parse_date_for_sort(created_at).date() == today,
+        })
+    rows.sort(key=lambda row: parse_date_for_sort(row.get("created_at")), reverse=True)
+    summary = {
+        "last_7_days": len(rows),
+        "today": sum(row["is_today"] for row in rows),
+        "recovered": sum(row["recovered"] for row in rows),
+        "open": sum(not row["recovered"] for row in rows),
+        "viewed": sum(row["viewed"] for row in rows),
+        "not_viewed": sum(not row["viewed"] for row in rows),
+        "value": round(sum(row["total_price"] for row in rows), 2),
+    }
+    return rows, summary
 
 
 def load_product_cost_overrides():
@@ -2532,6 +2720,7 @@ def build_admin_mobile_sections():
         {"id": "employee-orders", "label": "Orders", "icon": "🧾", "src": "/employee_portal/orders"},
         {"id": "postex-payments", "label": "PostEx Payments", "icon": "💰", "src": "/postex-payments?embedded=1"},
         {"id": "pending", "label": "Pending", "icon": "📋", "src": "/pending?embedded=1"},
+        {"id": "abandoned", "label": "Abandoned", "icon": "🛒", "src": "/abandoned?embedded=1"},
         {"id": "accounts", "label": "Accounts", "icon": "💼", "src": "/accounts?embedded=1"},
         {"id": "undelivered", "label": "Undelivered", "icon": "🚚", "src": "/undelivered?embedded=1"},
     ]
@@ -2748,6 +2937,29 @@ def tracking():
         shipper_advice_error=shipper_advice_error,
         employee_approvals=build_employee_approval_items(),
     )
+
+
+@app.get("/abandoned")
+def abandoned_orders():
+    try:
+        rows, summary = build_abandoned_checkouts_data(7, force=request.args.get("refresh") == "1")
+        error = ""
+    except Exception as fetch_error:
+        print(f"Could not load Aabroo abandoned checkouts: {fetch_error}")
+        rows, summary, error = [], {"last_7_days": 0, "today": 0, "recovered": 0, "open": 0, "viewed": 0, "not_viewed": 0, "value": 0}, str(fetch_error)
+    return render_template("abandoned.html", abandoned_checkouts=rows, summary=summary, error=error)
+
+
+@app.post("/abandoned/mark-viewed")
+def mark_abandoned_viewed():
+    token = str((request.get_json(silent=True) or {}).get("token") or "").strip()
+    if not token:
+        return jsonify({"success": False, "error": "Checkout token is required."}), 400
+    viewed_tokens = load_abandoned_viewed_tokens()
+    viewed_tokens.add(token)
+    if not save_abandoned_viewed_tokens(viewed_tokens):
+        return jsonify({"success": False, "error": "Could not save viewed status."}), 500
+    return jsonify({"success": True})
 
 
 @app.route("/refresh", methods=["POST"])

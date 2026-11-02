@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}Aabroo – Abandoned Checkouts{% endblock %}
+{% block content %}
+<style>
+  .ab-page{height:100%;display:flex;flex-direction:column;background:#f5f7fb;overflow:hidden}.ab-head{padding:14px 18px;background:#fff;border-bottom:1px solid #e3e6f0;display:flex;align-items:center;gap:12px;flex-wrap:wrap}.ab-title{font-size:18px;font-weight:800;color:#2d2e36}.ab-sub{font-size:11px;color:#858796}.ab-actions{margin-left:auto;display:flex;gap:8px}.ab-input,.ab-btn{border:1px solid #dfe3ee;border-radius:8px;padding:8px 11px;font:600 11px 'DM Sans',sans-serif;background:#fff}.ab-input{width:220px}.ab-btn{cursor:pointer;color:#4e73df;text-decoration:none}.ab-scroll{flex:1;overflow:auto;padding:14px}.ab-stats{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;margin-bottom:12px}.ab-stat{background:#fff;border:1px solid #e3e6f0;border-radius:11px;padding:11px}.ab-stat strong{display:block;font:800 18px 'DM Mono',monospace;color:#2d2e36}.ab-stat span{font-size:10px;color:#858796;text-transform:uppercase;font-weight:700}.ab-list{display:flex;flex-direction:column;gap:10px}.ab-card{background:#fff;border:1px solid #e3e6f0;border-radius:12px;padding:13px;display:grid;grid-template-columns:minmax(190px,.8fr) minmax(260px,1.5fr) minmax(180px,.8fr) auto;gap:14px;align-items:center}.ab-card.new{border-left:4px solid #e0a800}.ab-customer{font-size:13px;font-weight:800;color:#2d2e36}.ab-meta{font-size:10px;color:#858796;margin-top:4px;line-height:1.5}.ab-items{display:flex;gap:8px;overflow:auto}.ab-item{min-width:150px;display:grid;grid-template-columns:48px 1fr;gap:8px;align-items:center}.ab-img{width:48px;height:48px;border-radius:8px;background:#f2f4f8;overflow:hidden;display:flex;align-items:center;justify-content:center}.ab-img img{width:100%;height:100%;object-fit:cover}.ab-item-title{font-size:10px;font-weight:700;color:#3a3b45}.ab-money{font:800 14px 'DM Mono',monospace;color:#2d2e36}.ab-pill{display:inline-flex;padding:3px 8px;border-radius:99px;font-size:9px;font-weight:800;margin-top:5px}.ab-pill.open{background:#fff3cd;color:#8b5a00}.ab-pill.recovered{background:#d9f7eb;color:#0e7a53}.ab-card-actions{display:flex;flex-direction:column;gap:6px}.ab-action{border:0;border-radius:7px;padding:8px 10px;font-size:10px;font-weight:800;text-align:center;text-decoration:none;cursor:pointer;background:#4e73df;color:#fff;white-space:nowrap}.ab-action.wa{background:#1f9d64}.ab-action.view{background:#f2f4f8;color:#4e73df}.ab-error,.ab-empty{background:#fff;border:1px solid #e3e6f0;border-radius:12px;padding:22px;text-align:center;color:#858796}.ab-error{color:#b33b32;border-color:#f0c6c2}@media(max-width:900px){.ab-stats{grid-template-columns:repeat(3,1fr)}.ab-card{grid-template-columns:1fr 1fr}.ab-card-actions{flex-direction:row;grid-column:1/-1}}@media(max-width:600px){.ab-head{padding:12px}.ab-actions{width:100%;margin-left:0}.ab-input{flex:1;min-width:0}.ab-scroll{padding:10px}.ab-stats{grid-template-columns:repeat(2,1fr)}.ab-card{grid-template-columns:1fr}.ab-card-actions{grid-column:auto}.ab-items{padding-bottom:4px}}
+</style>
+<div class="ab-page">
+  <header class="ab-head">
+    <div><div class="ab-title">Abandoned Checkouts</div><div class="ab-sub">Aabroo Shopify checkouts from the last 7 days</div></div>
+    <div class="ab-actions"><input class="ab-input" id="abSearch" placeholder="Search customer, phone or product…" oninput="filterAbandoned()"><a class="ab-btn" href="/abandoned?refresh=1">↻ Refresh</a></div>
+  </header>
+  <div class="ab-scroll">
+    <div class="ab-stats">
+      <div class="ab-stat"><strong>{{ summary.last_7_days|format_number }}</strong><span>Last 7 days</span></div>
+      <div class="ab-stat"><strong>{{ summary.today|format_number }}</strong><span>Today</span></div>
+      <div class="ab-stat"><strong>{{ summary.open|format_number }}</strong><span>Open</span></div>
+      <div class="ab-stat"><strong>{{ summary.recovered|format_number }}</strong><span>Recovered</span></div>
+      <div class="ab-stat"><strong>{{ summary.not_viewed|format_number }}</strong><span>New</span></div>
+      <div class="ab-stat"><strong>PKR {{ summary.value|format_number }}</strong><span>Checkout value</span></div>
+    </div>
+    {% if error %}<div class="ab-error">Could not load abandoned checkouts: {{ error }}</div>{% endif %}
+    <div class="ab-list" id="abList">
+      {% for checkout in abandoned_checkouts %}
+      <article class="ab-card{% if not checkout.viewed %} new{% endif %}" data-card data-search="{{ checkout.customer_name }} {{ checkout.customer_email }} {{ checkout.customer_phone }} {{ checkout.customer_city }} {% for item in checkout['items'] %}{{ item.title }} {% endfor %}">
+        <div><div class="ab-customer">{{ checkout.customer_name }}</div><div class="ab-meta">{{ checkout.customer_phone or 'No phone' }}{% if checkout.customer_city %} · {{ checkout.customer_city }}{% endif %}<br>{{ checkout.customer_email or 'No email' }}<br>{{ checkout.relative_age }} · {{ checkout.customer_orders_count }} previous order{% if checkout.customer_orders_count != 1 %}s{% endif %}</div></div>
+        <div class="ab-items">{% for item in checkout['items'] %}<div class="ab-item"><div class="ab-img">{% if item.image %}<img src="{{ item.image }}" alt="">{% else %}📦{% endif %}</div><div><div class="ab-item-title">{{ item.title }}</div><div class="ab-meta">Qty {{ item.quantity }} · {{ item.display_total }}</div></div></div>{% endfor %}</div>
+        <div><div class="ab-money">{{ checkout.display_total }}</div><div class="ab-meta">Subtotal {{ checkout.display_subtotal }}<br>Shipping {{ checkout.display_shipping }}</div><span class="ab-pill {{ 'recovered' if checkout.recovered else 'open' }}">{{ 'Recovered' if checkout.recovered else 'Open' }}</span></div>
+        <div class="ab-card-actions">{% if checkout.whatsapp_url %}<a class="ab-action wa" href="{{ checkout.whatsapp_url }}" target="_blank" onclick="markViewed('{{ checkout.token|e }}',this)">WhatsApp</a>{% endif %}{% if checkout.abandoned_checkout_url %}<a class="ab-action" href="{{ checkout.abandoned_checkout_url }}" target="_blank" onclick="markViewed('{{ checkout.token|e }}',this)">Recover checkout</a>{% endif %}<button class="ab-action view" onclick="markViewed('{{ checkout.token|e }}',this)">{{ 'Viewed' if checkout.viewed else 'Mark viewed' }}</button></div>
+      </article>
+      {% else %}{% if not error %}<div class="ab-empty">No abandoned Shopify checkouts found in the last 7 days.</div>{% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+<script>
+function filterAbandoned(){const q=document.getElementById('abSearch').value.trim().toLowerCase();document.querySelectorAll('[data-card]').forEach(card=>card.style.display=card.dataset.search.toLowerCase().includes(q)?'grid':'none')}
+async function markViewed(token,button){try{const response=await fetch('/abandoned/mark-viewed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});const result=await response.json();if(!response.ok||!result.success)throw new Error(result.error||'Could not save');const card=button.closest('[data-card]');if(card)card.classList.remove('new');if(button.tagName==='BUTTON')button.textContent='Viewed'}catch(error){if(window.showToast)showToast(error.message);}}
+</script>
+{% endblock %}
