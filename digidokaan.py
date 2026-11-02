@@ -275,6 +275,82 @@ async def _public_tracking_history(session, tracking_number):
         return []
 
 
+def _sonic_payload_history(payload, tracking_number):
+    shipments = payload.get("shipments") if isinstance(payload, dict) else None
+    if not isinstance(shipments, dict):
+        return []
+    details = next(
+        (
+            value for value in shipments.values()
+            if isinstance(value, dict)
+            and re.sub(r"\D", "", str(value.get("tracking_number") or "")) == tracking_number
+        ),
+        next((value for value in shipments.values() if isinstance(value, dict)), None),
+    )
+    if not details:
+        return []
+    consignee = details.get("consignee") if isinstance(details.get("consignee"), dict) else {}
+    history = []
+    for event in reversed(details.get("tracking_history") or []):
+        if not isinstance(event, dict) or not str(event.get("status") or "").strip():
+            continue
+        history.append({
+            "ConsignmentNo": tracking_number,
+            "TransactionDate": event.get("date_time") or "",
+            "ProcessDescForPortal": _clean_status(event.get("status")),
+            "ReasonDesc": event.get("status_reason") or "",
+            "ConsigneeName": consignee.get("name") or "",
+            "ConsigneeAddress": "",
+            "ContactNo": "",
+            "ConsigneeCity": consignee.get("destination") or "",
+        })
+    return history
+
+
+async def _sonic_public_tracking_history(session, tracking_number):
+    """Submit Sonic/Trax's customer tracking form without merchant credentials."""
+    try:
+        headers = {"Accept": "text/html", "User-Agent": "Mozilla/5.0"}
+        # Sonic currently serves a broken certificate chain on some hosts. This
+        # request sends only a public tracking number and no account credentials.
+        async with session.get(
+            "https://sonic.pk/tracking",
+            params={"tracking_number": tracking_number},
+            headers=headers,
+            timeout=ClientTimeout(total=20),
+            ssl=False,
+        ) as response:
+            page = await response.text()
+        if response.status != 200:
+            return []
+        token_match = re.search(r"['_\"]token['\"]\s*:\s*['\"]([^'\"]+)", page)
+        if not token_match:
+            return []
+        async with session.post(
+            "https://sonic.pk/tracking/track",
+            data={"tracking_numbers": tracking_number, "_token": token_match.group(1)},
+            headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+            timeout=ClientTimeout(total=20),
+            ssl=False,
+        ) as response:
+            payload = await response.json(content_type=None)
+        return _sonic_payload_history(payload, tracking_number) if response.status == 200 else []
+    except Exception as error:
+        print(f"Sonic public tracking unavailable for {tracking_number}: {error}")
+        return []
+
+
+async def _combined_public_tracking_history(session, tracking_number):
+    digidokaan_result, sonic_result = await asyncio.gather(
+        _public_tracking_history(session, tracking_number),
+        _sonic_public_tracking_history(session, tracking_number),
+        return_exceptions=True,
+    )
+    digidokaan_history = digidokaan_result if isinstance(digidokaan_result, list) else []
+    sonic_history = sonic_result if isinstance(sonic_result, list) else []
+    return _prefer_fresher_history(digidokaan_history, sonic_history)
+
+
 def _cached_status(tracking_number):
     cached = _status_cache.get(tracking_number)
     if cached and cached[1] > time.monotonic():
@@ -287,7 +363,7 @@ def _cached_status(tracking_number):
 async def _fetch_status(session, tracking_number, config):
     account_result, public_result = await asyncio.gather(
         _order_detail(session, tracking_number, config),
-        _public_tracking_history(session, tracking_number),
+        _combined_public_tracking_history(session, tracking_number),
         return_exceptions=True,
     )
     order, detail = account_result if not isinstance(account_result, Exception) else (None, None)
@@ -319,8 +395,9 @@ async def fetch_tracking_status(session, tracking_number):
         return cached
     config = configuration()
     if not config:
-        history = await _public_tracking_history(session, normalized)
-        return history[-1].get("ProcessDescForPortal") if history else None
+        history = await _combined_public_tracking_history(session, normalized)
+        latest = _latest_history_event(history)
+        return latest.get("ProcessDescForPortal") if latest else None
     task = _inflight.get(normalized)
     if task is None:
         task = asyncio.create_task(_fetch_status(session, normalized, config))
@@ -346,11 +423,11 @@ async def fetch_tracking_history(session, tracking_number):
     if not normalized:
         return []
     if not config:
-        return await _public_tracking_history(session, normalized)
+        return await _combined_public_tracking_history(session, normalized)
     try:
         account_result, public_result = await asyncio.gather(
             _order_detail(session, normalized, config),
-            _public_tracking_history(session, normalized),
+            _combined_public_tracking_history(session, normalized),
             return_exceptions=True,
         )
         public_history = public_result if isinstance(public_result, list) else []
@@ -381,4 +458,4 @@ async def fetch_tracking_history(session, tracking_number):
         return _prefer_fresher_history(history, public_history)
     except Exception as error:
         print(f"DigiDokaan tracking history unavailable for {normalized}: {error}")
-        return await _public_tracking_history(session, normalized)
+        return await _combined_public_tracking_history(session, normalized)

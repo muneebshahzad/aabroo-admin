@@ -93,6 +93,17 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         self.assertEqual(history[-1]["ConsigneeName"], "Umair Nasir")
         self.assertEqual(history[-1]["ConsigneeCity"], "Islamabad")
 
+    def test_sonic_public_payload_is_mapped_to_portal_history(self):
+        history = digidokaan._sonic_payload_history({"shipments": {"11411576": {
+            "tracking_number": "22320269889521",
+            "consignee": {"name": "Customer", "destination": "Karachi"},
+            "tracking_history": [{"date_time": "2026-11-02 18:11:24", "status": "Shipment - Booked"}],
+        }}}, "22320269889521")
+
+        self.assertEqual(history[-1]["ProcessDescForPortal"], "Booked")
+        self.assertEqual(history[-1]["TransactionDate"], "2026-11-02 18:11:24")
+        self.assertEqual(history[-1]["ConsigneeCity"], "Karachi")
+
     def test_public_tracking_wins_only_when_it_has_a_newer_courier_scan(self):
         account_history = [
             {"TransactionDate": "25/10/2026 10:00:00", "ProcessDescForPortal": "In Transit"},
@@ -120,7 +131,7 @@ class DigiDokaanTrackingTests(IsolatedAsyncioTestCase):
         ]}}})
         public = [{"TransactionDate": "26-10-2026 12:13:00", "ProcessDescForPortal": "Delivered"}]
         with patch.object(digidokaan, "_order_detail", AsyncMock(return_value=account)), patch.object(
-            digidokaan, "_public_tracking_history", AsyncMock(return_value=public)
+            digidokaan, "_combined_public_tracking_history", AsyncMock(return_value=public)
         ):
             status = await digidokaan._fetch_status(object(), "22317469504278", config)
 
