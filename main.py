@@ -5,6 +5,7 @@ import hmac
 import json
 import os
 import smtplib
+import ssl
 import sys
 import threading
 import time
@@ -13,6 +14,7 @@ from email.mime.text import MIMEText
 from urllib.parse import urlencode, urlparse
 
 import aiohttp
+import certifi
 import requests
 import shopify
 from flask import (
@@ -95,6 +97,7 @@ TRACKING_REFRESH_FRESH_SECONDS = int(os.getenv("TRACKING_REFRESH_FRESH_SECONDS",
 TRACKING_REFRESH_SYNC_DEADLINE_SECONDS = float(os.getenv("TRACKING_REFRESH_SYNC_DEADLINE_SECONDS", "16"))
 TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS = float(os.getenv("TRACKING_REFRESH_BACKGROUND_DEADLINE_SECONDS", "90"))
 TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS = float(os.getenv("TRACKING_REFRESH_PER_SHIPMENT_TIMEOUT_SECONDS", "8"))
+TCS_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 _TAG_STYLES = {
     "Call Courier": "background:#ede7f6;color:#4527a0",
@@ -133,11 +136,19 @@ def is_postex_tracking(tracking_number="", courier_name=""):
     return tracking.startswith("CX") or (tracking.isdigit() and tracking.startswith("2") and len(tracking) >= 10)
 
 
+def is_tcs_tracking(tracking_number="", courier_name=""):
+    digits = "".join(character for character in str(tracking_number or "") if character.isdigit())
+    courier = str(courier_name or "").strip().casefold()
+    return "tcs" in courier or (len(digits) == 12 and digits.startswith("17"))
+
+
 def courier_label_for_tracking(courier_name="", tracking_number=""):
     if is_digidokaan_tracking(tracking_number, courier_name):
         return "DigiDokaan"
     if is_leopards_tracking(tracking_number):
         return "Leopards"
+    if is_tcs_tracking(tracking_number, courier_name):
+        return "TCS"
     if is_postex_courier(courier_name) or is_postex_tracking(tracking_number):
         return "PostEx"
     return str(courier_name or "").strip()
@@ -190,6 +201,8 @@ def normalize_status_bucket(status):
         return "Undelivered"
     if "OUT FOR DELIVERY" in upper:
         return "Out For Delivery"
+    if upper == "DISPATCHED" or "SHIPMENT PICKED UP" in upper or "ARRIVED AT TCS FACILITY" in upper:
+        return "Dispatched"
     if is_delivered_status(raw):
         return "Delivered"
     if "PICKED FROM SHIPPER" in upper:
@@ -1400,6 +1413,47 @@ def ensure_required_shopify_webhooks():
     return {"success": True, "topics": sorted(desired), "destinations": desired}
 
 
+def tcs_payload_to_tracking_history(tracking_number, payload):
+    response_data = (payload or {}).get("responseData") if isinstance(payload, dict) else None
+    if not isinstance(response_data, dict) or str(response_data.get("message") or "").upper() != "SUCCESS":
+        return []
+    shipment = ((response_data.get("shipmentinfo") or [{}])[0] or {})
+    history = []
+    for checkpoint in reversed(response_data.get("checkpoints") or []):
+        status = str((checkpoint or {}).get("status") or "").strip()
+        if not status:
+            continue
+        history.append({
+            "ConsignmentNo": str(tracking_number),
+            "TransactionDate": checkpoint.get("datetime") or "",
+            "ProcessDescForPortal": status,
+            "ReasonDesc": "",
+            "ConsigneeName": shipment.get("consignee") or "",
+            "ConsigneeAddress": "",
+            "ContactNo": "",
+            "ConsigneeCity": shipment.get("destination") or "",
+            "CourierName": "TCS",
+        })
+    return history
+
+
+async def fetch_tcs_public_tracking(session_obj, tracking_number):
+    body = {
+        "body": {
+            "url": "trackapinew",
+            "type": "GET",
+            "headers": {},
+            "payload": {},
+            "param": f"consignee={tracking_number}",
+        }
+    }
+    async with session_obj.post("https://www.tcsexpress.com/apibridge", json=body, ssl=TCS_SSL_CONTEXT) as response:
+        if response.status != 200:
+            return []
+        payload = await response.json(content_type=None)
+    return tcs_payload_to_tracking_history(tracking_number, payload)
+
+
 async def fetch_tracking_data(session_obj, tracking_number):
     if not tracking_number or tracking_number == "N/A":
         return {}
@@ -1416,11 +1470,18 @@ async def fetch_tracking_data(session_obj, tracking_number):
             "https://merchantapi.leopardscourier.com/api/trackBookedPacket/"
             f"?api_key={api_key}&api_password={api_password}&track_numbers={tracking_number}"
         )
+    elif is_tcs_tracking(tracking_number):
+        return await fetch_tcs_public_tracking(session_obj, tracking_number)
     else:
         url = f"https://cod.callcourier.com.pk/api/CallCourier/GetTackingHistory?cn={tracking_number}"
 
     async with session_obj.get(url) as response:
-        return await response.json()
+        data = await response.json(content_type=None)
+    if not is_leopards_tracking(tracking_number) and (not isinstance(data, list) or not data):
+        tcs_history = await fetch_tcs_public_tracking(session_obj, tracking_number)
+        if tcs_history:
+            return tcs_history
+    return data
 
 
 def get_variant_image_and_title(product, line_item):
@@ -1510,6 +1571,8 @@ def summarize_tracking_result(tracking_number, data):
         first = data[0]
         last = data[-1]
         status = last.get("ProcessDescForPortal") or "Booked"
+        if str(first.get("CourierName") or "").upper() == "TCS":
+            status = normalize_status_bucket(status)
         return {
             "status": status,
             "name": first.get("ConsigneeName") or "",

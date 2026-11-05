@@ -122,6 +122,7 @@
   /* Status badge */
   .sbadge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 99px; font-size: 10px; font-weight: 700; flex-shrink: 0; white-space: nowrap; }
   .sb-booked    { background: #ddeeff; color: #1a6bbd; }
+  .sb-dispatched{ background: #e8f8fb; color: #0a5c6e; }
   .sb-unbooked  { background: #ececec; color: #666; }
   .sb-delivered { background: #d9f7eb; color: #0e7a53; }
   .sb-partial   { background: #fff3cd; color: #8b5a00; }
@@ -263,7 +264,7 @@
 
     <!-- Filter pills + Refresh -->
     <div class="filter-strip">
-      {% for f in ['All','Booked','Un-Booked','Out For Delivery','Delivered','Need Attention','Being Return','RETURNED TO SHIPPER'] %}
+      {% for f in ['All','Booked','Dispatched','Un-Booked','Out For Delivery','Delivered','Need Attention','Being Return','RETURNED TO SHIPPER'] %}
       <button class="fpill {% if loop.first %}active{% endif %}" data-filter="{{ f }}" onclick="setFilter(this)">{{ f }}</button>
       {% endfor %}
       <button class="refresh-btn" id="refreshTrackingBtn" onclick="refreshTracking()">
@@ -373,6 +374,7 @@
       {% set wa_phone = phone | replace('+','') %}
 
       {% if s == 'Booked' %}{% set badge_cls = 'sb-booked' %}{% set dot_col = '#4e73df' %}
+      {% elif s == 'Dispatched' %}{% set badge_cls = 'sb-dispatched' %}{% set dot_col = '#36b9cc' %}
       {% elif s == 'Un-Booked' %}{% set badge_cls = 'sb-unbooked' %}{% set dot_col = '#aaa' %}
       {% elif s == 'Delivered' %}{% set badge_cls = 'sb-delivered' %}{% set dot_col = '#1cc88a' %}
       {% elif s == 'Partially Delivered' %}{% set badge_cls = 'sb-partial' %}{% set dot_col = '#f6c23e' %}
@@ -623,6 +625,7 @@ function normalizeStatusBucket(status) {
   if (upper === 'NEED ATTENTION') return 'Need Attention';
   if (upper === 'MIXED STATUS') return 'Mixed Status';
   if (upper.includes('OUT FOR DELIVERY')) return 'Out For Delivery';
+  if (upper === 'DISPATCHED' || upper.includes('SHIPMENT PICKED UP') || upper.includes('ARRIVED AT TCS FACILITY')) return 'Dispatched';
   if (upper === 'DELIVERED' || upper.startsWith('DELIVERED ')) return 'Delivered';
   if (upper.includes('PICKED FROM SHIPPER')) return 'Picked From Shipper';
   if (upper === 'BOOKED' || upper.includes('CONSIGNMENT BOOKED')) return 'Booked';
@@ -639,6 +642,7 @@ function getStatusQueryBucket(query) {
 function statusBadgeMeta(status) {
   const bucket = normalizeStatusBucket(status);
   if (bucket === 'Booked') return { cls: 'sb-booked', dot: '#4e73df', label: bucket };
+  if (bucket === 'Dispatched') return { cls: 'sb-dispatched', dot: '#36b9cc', label: bucket };
   if (bucket === 'Un-Booked') return { cls: 'sb-unbooked', dot: '#aaa', label: bucket };
   if (bucket === 'Delivered') return { cls: 'sb-delivered', dot: '#1cc88a', label: bucket };
   if (bucket === 'Partially Delivered') return { cls: 'sb-partial', dot: '#f6c23e', label: bucket };
